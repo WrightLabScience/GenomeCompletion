@@ -1,0 +1,366 @@
+Analysis_genome_assembly_dataset.txt
+
+Shu-Ting Cho <shutingcho@pitt.edu>
+
+# Collecting genome assemblies and corresponding metadata
+# Figure 1B
+
+
+# Download list of genome assembly and metadata from NCBI RefSeq database (on April 11, 2026)
+# assembly_summary.txt	2026-04-10 20:29	206M
+# CheckM_report_prokaryotes.txt	2026-04-11 06:46	83M
+wget -O refseq_bacteria_assembly_summary_04112026.txt https://ftp.ncbi.nlm.nih.gov/genomes/refseq/bacteria/assembly_summary.txt
+wget -O CheckM_report_prokaryotes_04112026.txt https://ftp.ncbi.nlm.nih.gov/genomes/ASSEMBLY_REPORTS/CheckM_report_prokaryotes.txt
+
+vim refseq_bacteria_assembly_summary_04112026.txt # remove "#" from the top lines
+
+# read genome summary into R
+## some strain names has "#", set comment.char="" to avoid error/warning
+## some species names has "'", set quote="" to avoid error/warning
+refseq_bacteria_assembly_summary_04112026 <- read.table('refseq_bacteria_assembly_summary_04112026.txt', sep="\t", header=TRUE, quote="", fill=FALSE, comment.char="") 
+dim(refseq_bacteria_assembly_summary_04112026)
+[1] 485467     38
+colnames(refseq_bacteria_assembly_summary_04112026)
+ [1] "assembly_accession"        "bioproject"                "biosample"                
+ [4] "wgs_master"                "refseq_category"           "taxid"                    
+ [7] "species_taxid"             "organism_name"             "infraspecific_name"       
+[10] "isolate"                   "version_status"            "assembly_level"           
+[13] "release_type"              "genome_rep"                "seq_rel_date"             
+[16] "asm_name"                  "asm_submitter"             "gbrs_paired_asm"          
+[19] "paired_asm_comp"           "ftp_path"                  "excluded_from_refseq"     
+[22] "relation_to_type_material" "asm_not_live_date"         "assembly_type"            
+[25] "group"                     "genome_size"               "genome_size_ungapped"     
+[28] "gc_percent"                "replicon_count"            "scaffold_count"           
+[31] "contig_count"              "annotation_provider"       "annotation_name"          
+[34] "annotation_date"           "total_gene_count"          "protein_coding_gene_count"
+[37] "non_coding_gene_count"     "pubmed_id"    
+rownames(refseq_bacteria_assembly_summary_04112026) <- gsub("^(GC[AF]_[0-9]{9}).*", "\\1", refseq_bacteria_assembly_summary_04112026$assembly_accession)
+refseq_bacteria_assembly_summary_04112026$genomeID <- gsub("^(GC[AF]_[0-9]{9}).*", "\\1", refseq_bacteria_assembly_summary_04112026$assembly_accession)
+
+# taxid to taxonomic rank names
+library(taxizedb)
+library(rentrez)
+db_download_ncbi(overwrite = TRUE)
+
+taxids <- unique(refseq_bacteria_assembly_summary_04112026$taxid)
+length(taxids)
+[1] 96321
+
+
+# function to get tax rank names using API (rentrez) if taxizedb failed
+get_classification_rentrez <- function(taxid) {
+  tryCatch({
+    rec   <- entrez_fetch(db = "taxonomy", id = taxid,
+                          rettype = "xml", parsed = TRUE)
+    nodes <- XML::getNodeSet(rec, "//LineageEx/Taxon")
+    
+    # build lineage - handle empty lineage
+    if (length(nodes) == 0) {
+      lineage <- data.frame(name = character(), rank = character(), 
+                            id = character(), stringsAsFactors = FALSE)
+    } else {
+      lineage <- do.call(rbind, lapply(nodes, function(node) {
+        data.frame(
+          name = XML::xmlValue(node[["ScientificName"]]),
+          rank = XML::xmlValue(node[["Rank"]]),
+          id   = XML::xmlValue(node[["TaxId"]]),
+          stringsAsFactors = FALSE
+        )
+      }))
+    }
+    
+    # append the taxid itself - safely extract values
+    sci_name <- XML::getNodeSet(rec, "//TaxaSet/Taxon/ScientificName")
+    rank_val <- XML::getNodeSet(rec, "//TaxaSet/Taxon/Rank")
+    
+    if (length(sci_name) == 0 || length(rank_val) == 0) {
+      cat(sprintf("  Warning: missing ScientificName or Rank for taxid %s\n", taxid))
+      return(if (nrow(lineage) > 0) lineage else NULL)
+    }
+    
+    self <- data.frame(
+      name = XML::xmlValue(sci_name[[1]]),
+      rank = XML::xmlValue(rank_val[[1]]),
+      id   = as.character(taxid),
+      stringsAsFactors = FALSE
+    )
+    
+    rbind(lineage, self)
+    
+  }, error = function(e) {
+    cat(sprintf("  rentrez API failed for taxid %s: %s\n", taxid, conditionMessage(e)))
+    NULL
+  })
+}
+
+
+# get rank names
+batch_size <- 500
+batches    <- split(taxids, ceiling(seq_along(taxids) / batch_size))
+ranks_wanted <- c("phylum", "class", "order", "family", "genus", "species")
+taxid_to_rank_names <- do.call(rbind, lapply(seq_along(batches), function(b) {
+	batch <- batches[[b]]
+	cat(sprintf("Processing batch %d/%d (%d taxids)\n", b, length(batches), length(batch)))
+	cls_list <- tryCatch(
+		classification(batch, db = "ncbi"),
+		error = function(e) {
+			cat("  Error in classification:", conditionMessage(e), "\n")
+			NULL
+		}
+	)
+	if (is.null(cls_list)) {
+		taxid_to_rank_names <- data.frame(taxid = batch)
+		for (r in ranks_wanted) taxid_to_rank_names[[r]] <- NA
+		return(taxid_to_rank_names)
+	}
+	n_total  <- length(batch)
+	n_done   <- 0L
+	do.call(rbind, lapply(seq_along(cls_list), function(i) {
+		x   <- cls_list[[i]]
+		row <- data.frame(taxid = batch[i])
+		# handle NULL, NA, or non-data.frame results
+		if (is.null(x) || all(is.na(x)) || !is.data.frame(x)) {
+			cat(sprintf("	taxizedb miss for %s, trying API...\n", batch[i]))
+			x <- get_classification_rentrez(batch[i])
+		}
+		# handle still-failed after API
+		if (is.null(x) || !is.data.frame(x) || nrow(x) == 0) {
+			cat(sprintf("	Warning: no classification for taxid %s\n", batch[i]))
+			for (r in ranks_wanted) row[[r]] <- NA
+			return(row)
+		}
+		# debug: print column names if unexpected
+		if (!all(c("name", "rank") %in% names(x))) {
+			cat(sprintf("	Unexpected columns for taxid %s: %s\n", batch[i], paste(names(x), collapse = ", ")))
+			for (r in ranks_wanted) row[[r]] <- NA
+			return(row)
+		}		
+		for (r in ranks_wanted) {
+			row[[r]] <- if (r %in% x$rank) x[x$rank == r, "name"] else NA
+		}
+		row
+	}))
+}))
+
+# check result
+dim(taxid_to_rank_names)
+[1] 96321     7
+
+# appen rank names to assembly_summary table
+refseq_bacteria_assembly_summary_04112026 <- merge(refseq_bacteria_assembly_summary_04112026, taxid_to_rank_names, by = "taxid", all.x = TRUE)
+
+
+###### run script on cluster: get metadata (assembly_stats) ######
+# list of genomeIDs
+writeLines(rownames(refseq_bacteria_assembly_summary_04112026), "queue_list.1.txt")
+
+mkdir ./metadata
+vim ./metadata.slurm
+#!/bin/bash
+
+#SBATCH -J metadata
+#SBATCH -p dept_cpu
+#SBATCH -c 1
+#SBATCH -a 0-485466%5
+
+# setup SCRDIR
+SCRDIR=/scr/${SLURM_JOB_ID}
+mkdir /scr/${SLURM_JOB_ID}
+cd $SCRDIR
+echo "SCRDIR:" /net/$SLURMD_NODENAME/scr/${SLURM_JOB_ID}
+outdir=metadata
+
+List=`cat queue_list.1.txt`
+arr=($List)
+genomeID=${arr[$SLURM_ARRAY_TASK_ID]}
+echo "genomeID: " $genomeID
+
+# transfer files
+rsync -av fetch_source_data.3.r parse_assembly_stats.3.r refseq_bacteria_assembly_summary_04112026.rds ${SCRDIR}/
+
+# fetch_source_data: genomic.fna.gz and assembly_stats.txt
+Rscript fetch_source_data.3.r refseq_bacteria_assembly_summary_04112026.rds ${genomeID} ftp_path fna assembly_stats
+rsync -av *_assembly_stats.txt ${outdir}/
+
+# download esummary.xml for metadata
+export NCBI_API_KEY="55a0d4f7439395d7c765ecefe3deb00d1c09"
+export api_key="55a0d4f7439395d7c765ecefe3deb00d1c09"
+esearch -db assembly -query "${genomeID}[Assembly Accession]" | esummary -mode xml > esummary.xml
+sed -i 's/&/\&amp;/g' esummary.xml
+if [[ -f esummary.xml ]] ; then
+	Rscript parse_assembly_stats.3.r --inputXML=esummary.xml --output=${genomeID}.tsv
+fi
+# check output
+if [[ -f ${genomeID}.tsv ]] ; then
+	echo -e "Result: DONE\t${genomeID}"
+	rsync -av ${genomeID}.tsv ${outdir}/
+else
+	echo -e "Result: FAILED\t${genomeID}"
+fi
+
+# check nucleotide bases ambiguity (anything other than ATCG)
+file=${genomeID}.fna.gz
+if [[ -f "$file" ]]; then
+	# Count ambiguous bases (N/n), ignoring header lines
+	ambig_count=$(zcat "$file" | grep -v "^>" | tr -cd 'NnRrYySsWwKkMmBbDdHhVv' | wc -c)
+	if [[ "${ambig_count}" -gt 0 ]]; then
+		echo -e "#ambiguity_check\t${genomeID}\t${ambig_count}\tAMBIGUOUS\tFALSE"
+	else
+		echo -e "#ambiguity_check\t${genomeID}\t0\tCLEAN\tTRUE"
+	fi
+else
+	echo "File not found: $file"
+fi
+
+# clean files
+trap "rm -r $SCRDIR" EXIT
+
+# echo information
+echo $SLURM_SUBMIT_DIR
+echo $SLURMD_NODENAME
+echo $SLURM_JOB_ID
+echo $SLURM_ARRAY_TASK_ID
+echo $genomeID "metadata"
+########### END OF SCRIPT ###########
+# run slurm
+mkdir runSlurm_metadata/; cd runSlurm_metadata/; sbatch metadata.slurm
+
+# concat result: ambiguity
+find . -name "slurm-*_*.out" -print0 | xargs -0 grep -h '#ambiguity_check' | sed 's/#ambiguity_check\t//g' > ambiguity.tsv
+
+# parse result: assembly_stats
+Rscript parse_assembly_stats.1.r metadata/ '_assembly_stats.txt' metadata.1.tsv
+n_file_in = 485465
+
+# concat result files
+cd metadata/
+find . -maxdepth 1 -name "*.tsv" -print0 | xargs -0 cat > metadata.2.tsv
+
+
+# read results into R and merge with assembly_summary
+ambiguity <- read.table('ambiguity.tsv', sep="\t", col.names=c('genomeID', 'n_ambig_bases', 'ambiguity', 'keep'), quote="", fill=TRUE, comment.char="")
+refseq_bacteria_assembly_summary_04112026 <- merge(refseq_bacteria_assembly_summary_04112026, ambiguity[,c('genomeID', 'n_ambig_bases')], by = "genomeID", all.x = TRUE)
+
+metadata.1 <- read.table('metadata.1.tsv', sep="\t", header=TRUE, quote="", fill=TRUE, comment.char="")
+metadata.1$genomeID <- gsub("^(GC[AF]_[0-9]{9}).*", "\\1", metadata.1$RefSeq_assembly_accession)
+refseq_bacteria_assembly_summary_04112026 <- merge(refseq_bacteria_assembly_summary_04112026, metadata.1[,c('genomeID','Assembly_method','Genome_coverage','Sequencing_technology')], by = "genomeID", all.x = TRUE)
+
+metadata.2 <- read.table('metadata.2.tsv', sep="\t", quote="", header=FALSE, fill=FALSE, comment.char="", col.names=c("AssemblyAccession","Taxid","SpeciesTaxid","SpeciesName","AssemblyStatus","BioprojectAccn","BioSampleAccn","Coverage"))
+metadata.2$genomeID <- gsub("^(GC[AF]_[0-9]{9}).*", "\\1", metadata.2$AssemblyAccession)
+refseq_bacteria_assembly_summary_04112026 <- merge(refseq_bacteria_assembly_summary_04112026, metadata.2[,c('genomeID','Coverage')], by = "genomeID", all.x = TRUE)
+
+
+# Classify each genome as short, long, hybrid, or unknown
+## Sequencing_technology
+tech_patterns <- list(
+  Shotgun     = "shotgun",
+  Illumina    = paste(c("illumina", "hiseq", "miseq", "nextseq", "novaseq", "iseq", "nextera", "solexa", "miniseq", "gaiix", "truseq", "genome analyzer"), collapse = "|"),
+  ONT         = paste(c("oxford", "nanopore", "minion", "gridion", "promethion", "miniion", "flongle"), collapse = "|"),
+  Ion_Torrent = paste(c("ion torrent", "iontorrent", "\\bpgm\\b", "ion personal genome", "ion genestudio", "ion proton", "\\bs5\\b"), collapse = "|"),
+  Roche_454   = paste(c("\\b454\\b", "roche", "gs.flx", "gs junior", "gs-20", "454 titanium", "flx titanium", "454flx"), collapse = "|"),
+  SOLiD       = "solid",
+  PacBio      = paste(c("pacific bio", "pacbio", "\\bsmrt\\b", "sequel", "pac bio", "\\brevio\\b", "hifi"), collapse = "|"),
+  `10x`       = "10x chromium",
+  DNBSeq      = paste(c("complete genomics", "\\bmgi\\b", "\\bbgi\\b", "dnbseq", "dbn", "dnb.seq", "mgiseq", "bgiseq", "genolab", "cycloneseq", "combinatorial probe"), collapse = "|"),
+  Sanger      = paste(c("sanger", "\\babi\\b", "3730", "dideoxy", "capillary"), collapse = "|")
+)
+# classify SeqTech
+SeqTech_raw <- refseq_bacteria_assembly_summary_04112026$Sequencing_technology
+TechnologyLogical.1 <- vapply(tech_patterns,\(pat) grepl(pat, SeqTech_raw, ignore.case = TRUE, perl = TRUE),logical(length(SeqTech_raw)))
+# add ONT
+for (i in seq_along(SeqTech_raw)) {
+	TechnologyLogical.1[i,'ONT'] <- ifelse(grepl(pattern = "\\bONT\\b",x = SeqTech_raw[i], ignore.case = FALSE, perl = TRUE),TRUE,TechnologyLogical.1[i,'ONT'])
+}
+# add others
+TechnologyLogical.1 <- cbind(TechnologyLogical.1,Others = rowSums(TechnologyLogical.1) < 1)
+TechnologyLogical.1 <- cbind(refseq_bacteria_assembly_summary_04112026[,c('genomeID','Sequencing_technology')], TechnologyLogical.1)
+
+# classify as s, l, h, unknown_others
+short_read <- c("Illumina", "Ion_Torrent", "Roche_454", "SOLiD", "DNBSeq")
+long_read   <- c("PacBio", "ONT")
+SeqTech_class.1 <- TechnologyLogical.1 |>
+  mutate(
+    is_short = rowSums(across(all_of(short_read))) > 0,
+    is_long  = rowSums(across(all_of(long_read)))  > 0,
+    read_type = case_when(
+      Others                  ~ "unknown_others",
+      is_short &  is_long     ~ "h",
+      is_short & !is_long     ~ "s",
+      !is_short &  is_long    ~ "l",
+      TRUE                    ~ "unknown_others"
+    )
+  ) |>
+  select(genomeID, read_type)
+refseq_bacteria_assembly_summary_04112026 <- merge(refseq_bacteria_assembly_summary_04112026, SeqTech_class.1, by = "genomeID", all.x = TRUE)
+
+
+#### plot Fig1B: checkM CDFs ####
+CheckM_report_prokaryotes_04112026 <- read.table('CheckM_report_prokaryotes_04112026.txt', sep="\t", header=TRUE, quote="", fill=FALSE, comment.char="") 
+refseq_bacteria_assembly_summary_04112026 <- merge(refseq_bacteria_assembly_summary_04112026, CheckM_report_prokaryotes_04112026[,c('refseq.accession','checkm.completeness','checkm.contamination')], by.x='assembly_accession', by.y='refseq.accession', all.x = TRUE)
+
+rownames(refseq_bacteria_assembly_summary_04112026) <- refseq_bacteria_assembly_summary_04112026$genomeID
+saveRDS(refseq_bacteria_assembly_summary_04112026, 'refseq_bacteria_assembly_summary_04112026.rds')
+
+# remove rows with NA for checkM values
+df_checkM <- refseq_bacteria_assembly_summary_04112026[(!is.na(refseq_bacteria_assembly_summary_04112026$checkm.completeness) & !is.na(refseq_bacteria_assembly_summary_04112026$checkm.contamination)), ]
+table(df_checkM$assembly_level)
+     Chromosome Complete Genome          Contig        Scaffold 
+           6845           58841          269161          150603 
+
+col_map_asm_lv <- c(
+  `Complete Genome` = "#3cb44b",
+  `Chromosome` = "#4363d8",
+  `Scaffold` = "#f58231",
+  `Contig` = '#e6194B'
+)
+
+# completeness
+pdf(file = "CDF_checkm_comp.1.pdf", width = 4, height = 4.6)
+plot(NA, xlim = c(0, 100), ylim = c(0, 1), xlab = "CheckM completeness (%)", ylab = "Cumulative probability", main = "Fig1B\nCDF of CheckM completeness")
+for (asm_lv_h in names(col_map_asm_lv)) {
+	plot(ecdf(df_checkM[df_checkM$assembly_level==asm_lv_h,'checkm.completeness']), verticals=TRUE, pch=NA, col=col_map_asm_lv[asm_lv_h], lwd=1, col.01line = NA, add=TRUE)
+}
+legend("topleft", legend = paste0(names(col_map_asm_lv), " (n = ", table(df_checkM$assembly_level)[names(col_map_asm_lv)], ")"), col = col_map_asm_lv, lwd=1, cex  = 0.8, bty  = "n", title = "Assembly level")
+dev.off()
+
+pdf(file = "CDF_checkm_comp.2.pdf", width = 4, height = 4.6)
+plot(NA, xlim = c(90, 100), ylim = c(0, 1), xlab = "CheckM completeness (%)", ylab = "Cumulative probability", main = "Fig1B\nCDF of CheckM completeness")
+for (asm_lv_h in names(col_map_asm_lv)) {
+	plot(ecdf(df_checkM[df_checkM$assembly_level==asm_lv_h,'checkm.completeness']), verticals=TRUE, pch=NA, col=col_map_asm_lv[asm_lv_h], lwd=1, col.01line = NA, add=TRUE)
+}
+legend("topleft", legend = paste0(names(col_map_asm_lv), " (n = ", table(df_checkM$assembly_level)[names(col_map_asm_lv)], ")"), col = col_map_asm_lv, lwd=1, cex  = 0.8, bty  = "n", title = "Assembly level")
+dev.off()
+
+pdf(file = "CDF_checkm_comp.3.pdf", width = 4, height = 4.6)
+plot(NA, xlim = c(95, 100), ylim = c(0, 1), xlab = "CheckM completeness (%)", ylab = "Cumulative probability", main = "Fig1B\nCDF of CheckM completeness")
+for (asm_lv_h in names(col_map_asm_lv)) {
+	plot(ecdf(df_checkM[df_checkM$assembly_level==asm_lv_h,'checkm.completeness']), verticals=TRUE, pch=NA, col=col_map_asm_lv[asm_lv_h], lwd=1, col.01line = NA, add=TRUE)
+}
+legend("topleft", legend = paste0(names(col_map_asm_lv), " (n = ", table(df_checkM$assembly_level)[names(col_map_asm_lv)], ")"), col = col_map_asm_lv, lwd=1, cex  = 0.8, bty  = "n", title = "Assembly level")
+dev.off()
+
+
+# contamination
+pdf(file = "CDF_checkm_cont.1.pdf", width = 4, height = 4.6)
+plot(NA, xlim = c(0, 100), ylim = c(0, 1), xlab = "CheckM contamination (%)", ylab = "Cumulative probability", main = "Fig1B\nCDF of CheckM contamination")
+for (asm_lv_h in names(col_map_asm_lv)) {
+	plot(ecdf(df_checkM[df_checkM$assembly_level==asm_lv_h,'checkm.contamination']), verticals=TRUE, pch=NA, col=col_map_asm_lv[asm_lv_h], lwd=1, col.01line = NA, add=TRUE)
+}
+legend("bottomright", legend = paste0(names(col_map_asm_lv), " (n = ", table(df_checkM$assembly_level)[names(col_map_asm_lv)], ")"), col = col_map_asm_lv, lwd=1, cex  = 0.8, bty  = "n", title = "Assembly level")
+dev.off()
+
+pdf(file = "CDF_checkm_cont.2.pdf", width = 4, height = 4.6)
+plot(NA, xlim = c(0, 10), ylim = c(0, 1), xlab = "CheckM contamination (%)", ylab = "Cumulative probability", main = "Fig1B\nCDF of CheckM contamination")
+for (asm_lv_h in names(col_map_asm_lv)) {
+	plot(ecdf(df_checkM[df_checkM$assembly_level==asm_lv_h,'checkm.contamination']), verticals=TRUE, pch=NA, col=col_map_asm_lv[asm_lv_h], lwd=1, col.01line = NA, add=TRUE)
+}
+legend("bottomright", legend = paste0(names(col_map_asm_lv), " (n = ", table(df_checkM$assembly_level)[names(col_map_asm_lv)], ")"), col = col_map_asm_lv, lwd=1, cex  = 0.8, bty  = "n", title = "Assembly level")
+dev.off()
+
+pdf(file = "CDF_checkm_cont.3.pdf", width = 4, height = 4.6)
+plot(NA, xlim = c(0, 5), ylim = c(0, 1), xlab = "CheckM contamination (%)", ylab = "Cumulative probability", main = "Fig1B\nCDF of CheckM contamination")
+for (asm_lv_h in names(col_map_asm_lv)) {
+	plot(ecdf(df_checkM[df_checkM$assembly_level==asm_lv_h,'checkm.contamination']), verticals=TRUE, pch=NA, col=col_map_asm_lv[asm_lv_h], lwd=1, col.01line = NA, add=TRUE)
+}
+legend("bottomright", legend = paste0(names(col_map_asm_lv), " (n = ", table(df_checkM$assembly_level)[names(col_map_asm_lv)], ")"), col = col_map_asm_lv, lwd=1, cex  = 0.8, bty  = "n", title = "Assembly level")
+dev.off()

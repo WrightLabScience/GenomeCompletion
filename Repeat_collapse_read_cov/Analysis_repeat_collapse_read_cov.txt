@@ -1,0 +1,435 @@
+Analysis_repeat_collapse_read_cov.txt
+
+Shu-Ting Cho <shutingcho@pitt.edu>
+
+# Investigating repeat collapse by read coverage
+# Figure 4ABC
+
+
+# Download and trim reads
+# Illumina PE reads from SRA
+
+
+# assembly_summary for complete genomes, single contig, hybrid or short-read assemblies
+assembly_summary_complete_1ctg_hs.rds
+assembly_summary_complete_1ctg_hs <- readRDS('assembly_summary_complete_1ctg_hs.rds')
+
+# Retrieve SRA info (run IDs) from NCBI
+Rscript get_SRA_info.2.r --input=assembly_summary_complete_1ctg_hs.rds --output=SRA_info.1.tsv --start_i=1 --end_i=15390
+
+
+# only use Illumina PE to eliminate biases caused by different sequencing platforms (e.g., sequencing quality)
+SRA_info.1 <- read.table('SRA_info.1.tsv', sep="\t", quote="", header=FALSE, fill=TRUE, col.names=c('genomeID', 'biosample', 'Run', 'Platform', 'LibraryLayout', 'Model')) # [1] 14120     6
+SRA_info.2 <- SRA_info.1[SRA_info.1$Platform=='ILLUMINA' & SRA_info.1$LibraryLayout=='PAIRED',]
+# only use genomes (BioSample) with single SRA Illumina PE run
+SRA_info.2.counts <- table(SRA_info.2$genomeID)
+SRA_info.3 <- SRA_info.2[SRA_info.2$genomeID %in% names(SRA_info.2.counts)[SRA_info.2.counts==1], ]
+writeLines(SRA_info.3$genomeID, "queue_list.4.txt")
+write.table(x = SRA_info.2, file = "SRA_info.2.tsv", quote = FALSE, row.names = FALSE, append = FALSE, sep = "\t", col.names = FALSE)
+
+
+############################################ Run script:trim_reads.3.r on cluster ############################################
+mkdir download_reads.1.out
+vim download_reads.1.slurm
+#!/bin/bash
+
+#SBATCH -J reads
+#SBATCH -p dept_cpu
+#SBATCH -c 1
+#SBATCH --mem=16G
+#SBATCH -a 0-571%100
+
+# setup SCRDIR
+SCRDIR=/scr/${SLURM_JOB_ID}
+mkdir /scr/${SLURM_JOB_ID}
+cd $SCRDIR
+echo "SCRDIR: " $SCRDIR
+echo "SLURM_ARRAY_TASK_ID: " $SLURM_ARRAY_TASK_ID
+rsync -av trim_reads.3.r ${SCRDIR}/
+
+# get var
+List=`cat queue_list.4.txt`
+arr=($List)
+genomeID=${arr[$SLURM_ARRAY_TASK_ID]}
+echo "genomeID: " ${genomeID}
+
+if [[ -f download_reads.1.out/${genomeID}_trimDNA.fasta.gz ]]; then
+	echo "${genomeID}_trimDNA.fasta.gz exist... Exiting job..."
+else
+	sra=`awk -v genomeID="${genomeID}" '$1 == genomeID { print $3 }' SRA_info.2.tsv`
+    echo "Working on ${sra}..."
+    # prefetch SRA
+    vdb-config --prefetch-to-cwd
+    prefetch ${sra} -O ./
+    # download raw reads
+    time fasterq-dump ${sra} --split-files --split-3 --skip-technical
+    if [[ -f "${sra}_1.fastq" && -f "${sra}_2.fastq" ]]; then
+        echo "SRA download completed: ${sra}"
+        # trim reads with fastp
+        time fastp -i ${sra}_1.fastq -I ${sra}_2.fastq -o fastp_1.fastq.gz -O fastp_2.fastq.gz --detect_adapter_for_pe
+        if [[ -f "fastp_1.fastq.gz" && -f "fastp_2.fastq.gz" ]]; then
+            echo "fastp completed. ${sra}"
+            rm *.fastq
+            # trim reads with TrimDNA
+            time Rscript trim_reads.3.r --infile_1=fastp_1.fastq.gz --fasta --maxAverageError=0.01 --minWidth=51 --output=${sra}_1_ 
+            time Rscript trim_reads.3.r --infile_1=fastp_2.fastq.gz --fasta --maxAverageError=0.01 --minWidth=51 --output=${sra}_2_ 
+            if [[ -f "${sra}_1_trimDNA.fasta" && -f "${sra}_2_trimDNA.fasta" ]]; then
+                echo "TrimDNA completed. ${sra}"
+                rm fastp_*.fastq.gz
+            else
+                echo "TrimDNA FAILED! ${sra}"
+            fi
+        else
+            echo "fastp FAILED! ${sra}"
+        fi
+    else
+        echo "fasterq-dump FAILED! ${sra}"
+    fi
+	# check result
+	if ls *_trimDNA.fasta 2>/dev/null | grep -q .; then
+		echo "${genomeID} DONE"
+		cat *_trimDNA.fasta > ${genomeID}_trimDNA.fasta
+		gzip ${genomeID}_trimDNA.fasta
+		rsync -av ${genomeID}_trimDNA.fasta.gz download_reads.1.out/
+	else
+		echo "${genomeID} FAILED"
+	fi	
+fi
+
+# clean files
+trap "rm -r $SCRDIR" EXIT
+
+# echo information
+echo $SLURM_SUBMIT_DIR
+echo $SLURMD_NODENAME
+echo $SLURM_JOB_ID
+echo $SLURM_ARRAY_TASK_ID
+echo $genomeID
+###### END OF SCRIPT ######
+# run slurm
+mkdir runSlurm_download_reads.1/
+cd runSlurm_download_reads.1/
+sbatch download_reads.1.slurm
+
+
+############################################ Run script:map_reads.6.r on cluster ############################################
+# run SearchIndex on cluster
+mkdir map_reads.1/
+vim map_reads.1.slurm
+#!/bin/bash
+
+#SBATCH -J map_reads.1
+#SBATCH -p dept_cpu
+#SBATCH -c 1
+#SBATCH --mem=16G
+#SBATCH -a 0-519%100
+
+# setup SCRDIR
+SCRDIR=/scr/${SLURM_JOB_ID}
+mkdir /scr/${SLURM_JOB_ID}
+cd $SCRDIR
+echo "SCRDIR:" /net/$SLURMD_NODENAME/scr/${SLURM_JOB_ID}
+
+# get var
+List=`cat queue_list.5.txt`
+arr=($List)
+genomeID=${arr[$SLURM_ARRAY_TASK_ID]}
+echo "Job running ... ${genomeID}, map_reads.1"
+
+if [[ -f map_reads.1/${genomeID}_highcov.RData ]]; then
+	echo -e "Result data exist: $SLURM_ARRAY_TASK_ID\t${genomeID}"
+elif [[ -f download_reads.1.out/${genomeID}_trimDNA.fasta.gz ]]; then
+	echo "${genomeID}_trimDNA.fasta.gz exist"
+	rsync -av download_reads.1.out/${genomeID}_trimDNA.fasta.gz map_reads.6.r ${SCRDIR}/
+	if [[ -f source_data_04112026/genomic.fna/${genomeID}.fna.gz ]]; then
+		rsync -avz --progress source_data_04112026/genomic.fna/${genomeID}.fna.gz ${SCRDIR}/
+	else
+		rsync -avz --progress fetch_source_data.3.r assembly_summary_complete_1ctg_hs.rds ${SCRDIR}/
+		Rscript fetch_source_data.3.r assembly_summary_complete_1ctg_hs.rds ${genomeID} ftp_path fna
+	fi
+	qry_fna=${genomeID}.fna.gz
+	# Run R script
+	cd $SCRDIR
+	time Rscript map_reads.6.r --reads=${genomeID}_trimDNA.fasta.gz --genomeQ=${qry_fna} --K=8 --proc=1 --cutoff_frac=0.66
+	rsync -av *_highcov.RData map_reads.1/
+	# save fna
+	if [[ -f source_data_04112026/genomic.fna/${genomeID}.fna.gz ]]; then
+		echo "fna EXIST: ${genomeID}.fna.gz"
+	else
+		rsync -avz --progress ${genomeID}.fna.gz source_data_04112026/genomic.fna/
+	fi
+else
+	echo -e "${genomeID}_trimDNA.fasta.gz NOT exist...\t$SLURM_ARRAY_TASK_ID\t${genomeID}"
+fi
+
+# clean files
+trap "rm -r $SCRDIR" EXIT
+
+# echo information
+echo $SLURM_SUBMIT_DIR
+echo $SLURMD_NODENAME
+echo $SLURM_JOB_ID
+echo "${genomeID}, map_reads.1"
+########### END OF SCRIPT ###########
+# run slurm
+mkdir runSlurm_map_reads.1/
+cd runSlurm_map_reads.1/
+sbatch map_reads.1.slurm
+
+# concat result
+cd runSlurm_map_reads.1/; grep -h '# Results:' * | sed -E 's/# Results:\t//g' | sort -u > frac_high_cov.1.tsv
+
+# read into R
+frac_high_cov.1 <- read.table('frac_high_cov.1.tsv', sep="\t", quote="", header=FALSE, fill=TRUE, col.names=c('genomeID', 'frac_high_cov', 'n_high_cov', 'frac_fold_high_cov', 'n_fold_high_cov', 'genome_length', 'frac_mapped')) 
+
+frac_high_cov.1_merge <- merge(frac_high_cov.1, assembly_summary_complete_1ctg_hs, by='genomeID')
+
+# filter by fraction genome mapped by reads (>=95%)
+frac_high_cov.1_merge_f95 <- frac_high_cov.1_merge[frac_high_cov.1_merge$frac_mapped>=0.95,]
+# remove genomes w/ Insufficient mapped reads (<50%) result from Missing_region_kmer_counts
+frac_high_cov.1_merge_f95 <- frac_high_cov.1_merge_f95[!frac_high_cov.1_merge_f95$genomeID %in% c("GCF_000952935","GCF_016584405","GCF_022985555","GCF_022985615","GCF_024817135","GCF_024817155","GCF_049544845","GCF_052692685","GCF_055397755"),]
+
+# balance dataset by species_taxid and read_type
+library(dplyr)
+frac_high_cov.1_merge_f95_balanced <- frac_high_cov.1_merge_f95 %>%
+  # Remove species_taxids that don't have both read types
+  group_by(species_taxid) %>%
+  filter(all(c("s", "h") %in% read_type)) %>%
+  # Count per species_taxid + read_type, then find minimum
+  group_by(species_taxid, read_type) %>%
+  mutate(n = n()) %>%
+  group_by(species_taxid) %>%
+  mutate(min_n = min(n)) %>%
+  ungroup() %>%
+  # Downsample using row-level filtering
+  group_by(species_taxid, read_type) %>%
+  filter(row_number() <= first(min_n)) %>%
+  ungroup() %>%
+  select(-n, -min_n)
+
+# Verify balance
+table(frac_high_cov.1_merge_f95_balanced$species_taxid, frac_high_cov.1_merge_f95_balanced$read_type)
+#            h  s
+#   34       1  1
+#   69       1  1
+#   195      1  1
+#   196      1  1
+#   197     45 45
+#   210      3  3
+#   263      1  1
+#   287     12 12
+#   293      1  1
+#   303      2  2
+#   317      1  1
+#   339      1  1
+#   347      2  2
+#   470      1  1
+#   487      2  2
+#   562      8  8
+#   573      1  1
+#   582      1  1
+#   584      1  1
+#   747      1  1
+#   813      1  1
+#   979      1  1
+#   1254     1  1
+#   1280     1  1
+#   1311     4  4
+#   1314     4  4
+#   1358     1  1
+#   1402     1  1
+#   1423    12 12
+#   1491     1  1
+#   1496     3  3
+#   1520     1  1
+#   1590     1  1
+#   1639    36 36
+#   1661     1  1
+#   1717     1  1
+#   1719     3  3
+#   1767     1  1
+#   1773    22 22
+#   2104     1  1
+#   28901   25 25
+#   33923    3  3
+#   36809    7  7
+#   39692    1  1
+#   40324    2  2
+#   43765    1  1
+#   47715    1  1
+#   61435    1  1
+#   65058    2  2
+#   82996    2  2
+#   83262    1  1
+#   148814   1  1
+#   192812   1  1
+#   216816   2  2
+#   293387   1  1
+#   483913   1  1
+#   492670   4  4
+#   1117645  4  4
+#   1134687  1  1
+#   1444770  1  1
+#   1812935  1  1
+#   2681983  1  1
+#   2745514  1  1
+
+table(frac_high_cov.1_merge_f95_balanced$read_type)
+#   h   s 
+# 249 249
+saveRDS(frac_high_cov.1_merge_f95_balanced, 'frac_high_cov.1_merge_f95_balanced.rds')
+
+
+
+
+
+##### Fig. 4A: example of high cov region in GCF_001677195 #####
+genomeID <- 'GCF_001677195'
+load(paste0('map_reads.1/', genomeID,'_highcov.RData')) # cov_vec, ir_high_cov, ir_fold_high_cov, padj
+summary(cov_vec)
+#    Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+#     2.0   248.0   266.0   266.6   284.0  1651.7 
+
+1652/266 # fold of median at peak coverage
+[1] 6.210526
+
+pdf(file = "Cov_spike.GCF_001677195.1.pdf", width = 4, height = 4.6)
+plot(cov_vec[2547000:2553000], type = "l", xlim=c(1000,5000), xlab='Genomic position (nucleotides)', ylab='Short-read coverage', main=paste0('Genome: ', genomeID),xaxt = 'n', panel.first={abline(h=median(cov_vec), col='gray', lwd=2, lty = 3)})
+text(900,median(cov_vec)+100, 'Median coverage=266', c(0,0), col='gray')
+text(2500,1500, 'Peak coverage=6.2 fold', col='black')
+axis(1, at = seq(1000, 5000, by = 1000), labels = seq(2548000, 2552000, by = 1000))
+dev.off()
+
+
+
+
+
+##### Fig. 4B: example of fitting NB to read coverage (GCF_011405515) #####
+genomeID <- 'GCF_011405515'
+load(paste0('map_reads.1/', genomeID,'_highcov.RData')) # cov_vec, ir_high_cov, ir_fold_high_cov, padj
+
+## use negative binomial distribution to calculate p-value
+# calculate cutoff for left truncation
+cov_smooth <- stats::filter(cov_vec, rep(1/5, 5), sides = 2) # smoothing w/ window size=5bp
+cov_mode <- as.numeric(names(sort(-table(round(cov_smooth))))[1]) # mode = 75
+threshold <- round(cov_mode * (2/3)) # threshold for truncation = 50
+
+# MLE optimize parameters for NB for left truncated read coverage
+fit_truncated_nb <- function(x, cutoff, init_mu=NULL, init_size=NULL) {
+	# Keep only truncated data
+	x_trunc <- x[x >= cutoff]
+	n <- length(x_trunc)
+
+	if (n == 0) stop("No data above cutoff.")
+
+	# Initial values
+	if (is.null(init_mu)) init_mu <- mean(x_trunc)
+	if (is.null(init_size)) {
+		v <- var(x_trunc)
+		init_size <- ifelse(v > init_mu, init_mu^2 / (v - init_mu), 10)
+	}
+	
+	# Negative log-likelihood
+	nll <- function(par) {
+		mu <- exp(par[1])
+		size <- exp(par[2])
+
+		if (!is.finite(mu) || !is.finite(size) || mu <= 0 || size <= 0) {
+			return(Inf)  # return large penalty instead of NaN
+		}
+		
+		# log PMF for observed values
+		ll_obs <- sum(dnbinom(x_trunc, size=size, mu=mu, log=TRUE))
+		
+		# log normalization constant
+		log_tail <- pnbinom(cutoff - 1, size=size, mu=mu, lower.tail=FALSE, log.p=TRUE)
+		
+		if (!is.finite(log_tail)) return(Inf)
+		
+		ll <- ll_obs - n * log_tail
+		
+		return(-ll)
+	}
+	
+	fit <- optim(
+		par = log(c(init_mu, init_size)),
+		fn = nll,
+		method = "L-BFGS-B"
+	)
+	
+	list(
+		mu = exp(fit$par[1]),
+		size = exp(fit$par[2]),
+		logLik = -fit$value,
+		convergence = fit$convergence
+	)
+}
+
+# fit the model
+fit <- fit_truncated_nb(x=round(cov_vec), cutoff=threshold, init_mu=NULL, init_size=NULL)
+
+# compute p-values
+pvals <- pnbinom(cov_vec - 1, size = fit$size, mu = fit$mu, lower.tail = FALSE)
+padj <- p.adjust(pvals, method = "BH")
+
+pdf(file = "NB_MLE.GCF_011405515.pdf", width = 4, height = 4.6)
+# Get histogram data without plotting
+h <- hist(cov_vec, breaks=50, plot=FALSE)
+# Color bars below threshold light gray, others default
+bar_colors <- ifelse(h$mids > threshold, "lightgray", "white")
+border_colors <- ifelse(h$mids > threshold, "black", "gray")
+# Plot with custom colors
+plot(h, col=bar_colors, border=border_colors, freq=FALSE, main=paste0('Short-read coverage (',genomeID,')'), xlab='Short-read coverage per position')
+x <- c(0:max(cov_vec))
+lines(x, dnbinom(x, size=fit$size, mu=fit$mu), col='#f58231', lwd=2)
+abline(v=min(cov_vec[padj < 0.05], na.rm = TRUE), col='red', lwd=2)
+legend("topright", legend=c('Fitted with\ntruncated data', 'Truncated data','p.adj<0.05 threshold'), col=c('#f58231', 'gray','red'), pch = c(NA, 0, NA), inset=0.025, bty="n", lwd=2, lty=c(1,NA,1), pt.cex=1.5)
+dev.off()
+
+
+
+
+
+##### Fig. 4C: frac of high cov by seqTech #####
+df <- as.data.frame(frac_high_cov.1_merge_f95_balanced)
+# frac_fold_high_cov: statistically high coverage & >= 2 fold of mode coverage & >= 50 bp
+
+# filter by mapped_fraction >= 95% (from Missing_region_kmer_counts)
+IdentifyMissingReads.7.covInf_merge_mf95 <- readRDS('Missing_region_kmer_counts/IdentifyMissingReads.7.covInf_merge_mf95.rds')
+df <- df[df$genomeID %in% IdentifyMissingReads.7.covInf_merge_mf95$genomeID, ]
+table(df$read_type)
+  h   s 
+244 235
+
+
+## K-S test 
+ks_test_sgth <- ks.test(df[df$read_type == "s", "frac_fold_high_cov"], df[df$read_type == "h", "frac_fold_high_cov"], alternative = "less")
+# 	Asymptotic two-sample Kolmogorov-Smirnov test
+
+# data:  df[df$read_type == "s", "frac_fold_high_cov"] and df[df$read_type == "h", "frac_fold_high_cov"]
+# D^- = 0.28458, p-value = 3.795e-09
+# alternative hypothesis: the CDF of x lies below that of y
+
+
+col_map_seqTech <- c(
+  s = "#7570b3",   # blue
+  h = "#d95f02"   # orange
+)
+
+# full range
+pdf(file = "CDF_frac_high_cov.5.pdf", width = 4, height = 4.6)
+plot(NA, xlim = c(0,max(df$frac_fold_high_cov*100)), ylim = c(0, 1), xlab = "Percent of genome with\nstatistically high coverage (%)", ylab = "Cumulative probability", main = paste0("Fig4C.\nCDFs of frac of genome w/ high cov by seqTech\n", "KS test s > h, p-value=", round(ks_test_sgth$p.value,6)))
+for (tech_h in names(col_map_seqTech)) {
+	plot(ecdf(df[df$read_type==tech_h, 'frac_fold_high_cov']*100), verticals=TRUE, pch=NA, col=col_map_seqTech[tech_h], lwd=2, col.01line = NA, add=TRUE)
+}
+legend("bottomright", legend = paste0(names(col_map_seqTech), " (n = ", table(df$read_type)[names(col_map_seqTech)] , ")"), col = col_map_seqTech, lwd = 2, cex = 0.8, bty = "n", title = "Sequencing technology")
+dev.off()
+
+# zoom
+pdf(file = "CDF_frac_high_cov.6.pdf", width = 4, height = 4.6)
+plot(NA, xlim = c(0,1), ylim = c(0, 1), xlab = "Percent of genome with\nstatistically high coverage (%)", ylab = "Cumulative probability", main = paste0("Fig4C.\nCDFs of frac of genome w/ high cov by seqTech\n", "KS test s > h, p-value=", round(ks_test_sgth$p.value,6)))
+for (tech_h in names(col_map_seqTech)) {
+	plot(ecdf(df[df$read_type==tech_h, 'frac_fold_high_cov']*100), verticals=TRUE, pch=NA, col=col_map_seqTech[tech_h], lwd=2, col.01line = NA, add=TRUE)
+}
+legend("bottomright", legend = paste0(names(col_map_seqTech), " (n = ", table(df$read_type)[names(col_map_seqTech)] , ")"), col = col_map_seqTech, lwd  = 2, cex  = 0.8, bty  = "n", title = "Sequencing technology")
+dev.off()

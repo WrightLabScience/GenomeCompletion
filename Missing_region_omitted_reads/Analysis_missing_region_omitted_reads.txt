@@ -1,0 +1,352 @@
+Analysis_missing_region_omitted_reads.txt
+
+Shu-Ting Cho <shutingcho@pitt.edu>
+
+# Investigating putative missing region by mapping reads to source and high ANI partner genomes
+# Figure 5AB
+
+
+# Run on balanced dataset: complete, no amb, single contig, single Illumina PE SRA, >=95% genome mapped, >= 50% reads mapped
+assembly_summary_complete_1ctg_hs <- readRDS('Repeat_collapse_read_cov/assembly_summary_complete_1ctg_hs.rds')
+frac_high_cov.1_merge_f95_balanced <- readRDS('Repeat_collapse_read_cov/frac_high_cov.1_merge_f95_balanced.rds')
+table(frac_high_cov.1_merge_f95_balanced$read_type)
+  h   s 
+249 249
+
+# search for high ANI partner hybrid assembled genomeR
+pool_genomeR <- assembly_summary_complete_1ctg_hs[assembly_summary_complete_1ctg_hs$n_ambig_bases==0 & assembly_summary_complete_1ctg_hs$read_type=='h' & !is.na(assembly_summary_complete_1ctg_hs$genus),]
+
+# generate a list of genome pairs for running fastANI
+for (species_taxid_h in unique(frac_high_cov.1_merge_f95_balanced$species_taxid)) {
+	genomeQs <- frac_high_cov.1_merge_f95_balanced[frac_high_cov.1_merge_f95_balanced$species_taxid==species_taxid_h,'genomeID']
+	genomeRs <- pool_genomeR[pool_genomeR$species_taxid==species_taxid_h,'genomeID']
+	cat(species_taxid_h, length(genomeQs), length(genomeRs), '\n')
+	df <- expand.grid(genomeQ = genomeQs, genomeR = genomeRs)
+	df <- df[as.character(df$genomeQ)!=as.character(df$genomeR),]
+	write.table(df, file = "queue_list.2.txt", sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE, append = TRUE)
+}
+
+############################################ run fastANI for sh and hh ############################################
+vim fastANI.2.slurm
+#!/bin/bash
+
+#SBATCH -J fastANI
+#SBATCH -p dept_cpu
+#SBATCH -c 1
+#SBATCH -a 1-63575%100
+
+# setup SCRDIR
+SCRDIR=/scr/${SLURM_JOB_ID}
+mkdir /scr/${SLURM_JOB_ID}
+cd $SCRDIR
+echo "SCRDIR:" /net/$SLURMD_NODENAME/scr/${SLURM_JOB_ID}
+echo "My SLURM_ARRAY_TASK_ID: " $SLURM_ARRAY_TASK_ID
+
+GenomeQ=`awk -F'\t' 'NR == x { print $1 }' x=$SLURM_ARRAY_TASK_ID queue_list.2.txt`
+GenomeR=`awk -F'\t' 'NR == x { print $2 }' x=$SLURM_ARRAY_TASK_ID queue_list.2.txt`
+echo "Job start: " ${GenomeQ} ${GenomeR}
+
+# move or download source data
+if [[ -f source_data_04112026/genomic.fna/${GenomeQ}.fna.gz ]]; then
+	rsync -avz --progress source_data_04112026/genomic.fna/${GenomeQ}.fna.gz ${SCRDIR}/
+else
+	rsync -avz --progress fetch_source_data.3.r assembly_summary_complete_1ctg_hs.rds ${SCRDIR}/
+	Rscript fetch_source_data.3.r assembly_summary_complete_1ctg_hs.rds ${GenomeQ} ftp_path fna
+fi
+if [[ -f source_data_04112026/genomic.fna/${GenomeR}.fna.gz ]]; then
+	rsync -avz --progress source_data_04112026/genomic.fna/${GenomeR}.fna.gz ${SCRDIR}/
+else
+	rsync -avz --progress fetch_source_data.3.r assembly_summary_complete_1ctg_hs.rds ${SCRDIR}/
+	Rscript fetch_source_data.3.r assembly_summary_complete_1ctg_hs.rds ${GenomeR} ftp_path fna
+fi
+
+# Run fastANI bidirection
+fastANI -q ${GenomeQ}.fna.gz -r ${GenomeR}.fna.gz -o ${GenomeQ}_${GenomeR}_fastANI
+fastANI -q ${GenomeR}.fna.gz -r ${GenomeQ}.fna.gz -o ${GenomeR}_${GenomeQ}_fastANI
+# check output
+if [[ -s "./${GenomeQ}_${GenomeR}_fastANI" ]] && [[ -s "./${GenomeR}_${GenomeQ}_fastANI" ]]; then
+    echo "Job done, $SLURM_ARRAY_TASK_ID, ${GenomeQ}, ${GenomeR}, fastANI"
+    cat ${GenomeQ}_${GenomeR}_fastANI ${GenomeR}_${GenomeQ}_fastANI > fastANI_cat.txt
+    # calculate values
+    awk '
+    BEGIN {FS=OFS="\t"}
+    
+    NR==1{
+        GenomeQ=$1; GenomeR=$2; ANI_AB=$3; C1=$4; S1=$5;
+    }
+    NR==2{
+        ANI_BA=$3; C2=$4; S2=$5;
+
+        if(S1+S2>0){
+            aveANI=(ANI_AB+ANI_BA)/2;
+            print "Result_fastANI",GenomeQ,GenomeR,ANI_AB,C1,S1,ANI_BA,C2,S2,aveANI
+        }
+        else{
+            print "# Division by zero:",GenomeQ,GenomeR
+        }
+    }' fastANI_cat.txt > fastANI_result.txt
+    cat fastANI_result.txt
+else
+    echo "Job failed, $SLURM_ARRAY_TASK_ID, ${GenomeQ}, ${GenomeR}, fastANI"
+fi
+
+# save fna
+if [[ -f source_data_04112026/genomic.fna/${GenomeQ}.fna.gz ]]; then
+	echo "fna EXIST: ${GenomeQ}.fna.gz"
+else
+	rsync -avz --progress ${GenomeQ}.fna.gz source_data_04112026/genomic.fna/
+fi
+if [[ -f source_data_04112026/genomic.fna/${GenomeR}.fna.gz ]]; then
+	echo "fna EXIST: ${GenomeR}.fna.gz"
+else
+	rsync -avz --progress ${GenomeR}.fna.gz source_data_04112026/genomic.fna/
+fi
+
+# clean files
+trap "rm -r $SCRDIR" EXIT
+
+# echo information
+echo $SLURM_SUBMIT_DIR
+echo $SLURMD_NODENAME
+echo $SLURM_JOB_ID
+echo $SLURM_ARRAY_TASK_ID
+########### END OF SCRIPT ###########
+# run slurm
+mkdir runSlurm_fastANI.2/
+cd runSlurm_fastANI.2/
+sbatch fastANI.2.slurm
+
+# concat fastANI result
+cd runSlurm_fastANI.2/; grep -h 'Result_fastANI' * | sed 's/.fna.gz//g' | sed 's/Result_fastANI\t//g' | sort -u > cat_fastANI.2.tsv
+
+
+# read results into R
+df_fastANI.2 <- read.table('cat_fastANI.2.tsv', sep="\t", quote="", header=FALSE, fill=TRUE, col.names=c("genomeQ","genomeR","ANI_AB","C1","S1","ANI_BA","C2","S2","aveANI")) # [1] 63575     9
+
+# get rows with maxANI genomeR partner for each genomeQ
+library(dplyr)
+df_fastANI.2_maxANI <- df_fastANI.2 %>%
+	group_by(genomeQ) %>%
+	filter(aveANI == max(aveANI)) %>%
+	slice(1) %>%  # break ties
+	ungroup()
+dim(df_fastANI.2_maxANI) # [1] 472   9
+df_fastANI.2_maxANI_f999 <- df_fastANI.2_maxANI[df_fastANI.2_maxANI$aveANI>=99.9,] # High ANI (>=99.9%) partner genomeR (h) for each genomeQ (s or h)
+dim(df_fastANI.2_maxANI_f999) # [1] 362   9
+
+# For genomeQ without a partner found, search for genomeR again in the same genus
+# Result: cat_fastANI.3.tsv, df_fastANI.3_maxANI_f999
+
+# combine results
+df_fastANI_maxANI_f999 <- rbind(df_fastANI.2_maxANI_f999, df_fastANI.3_maxANI_f999)
+dim(df_fastANI_maxANI_f999)
+[1] 368   9
+
+df_fastANI_maxANI_f999 <- merge(df_fastANI_maxANI_f999, assembly_summary_complete_1ctg_hs[, c('genomeID', 'read_type', 'species_taxid')], by.x = 'genomeQ', by.y = 'genomeID')
+saveRDS(df_fastANI_maxANI_f999, 'df_fastANI_maxANI_f999.rds')
+
+# balance dataset by read_type and species_taxid
+library(dplyr)
+df_fastANI_maxANI_f999_balanced <- df_fastANI_maxANI_f999 %>%
+  # Remove species_taxids that don't have both read types
+  group_by(species_taxid) %>%
+  filter(all(c("s", "h") %in% read_type)) %>%
+  # Count per species_taxid + read_type, then find minimum
+  group_by(species_taxid, read_type) %>%
+  mutate(n = n()) %>%
+  group_by(species_taxid) %>%
+  mutate(min_n = min(n)) %>%
+  ungroup() %>%
+  # Downsample using row-level filtering
+  group_by(species_taxid, read_type) %>%
+  filter(row_number() <= first(min_n)) %>%
+  ungroup() %>%
+  select(-n, -min_n)
+
+# Verify balance
+table(df_fastANI_maxANI_f999_balanced$read_type)
+#   h   s 
+# 127 127
+table(df_fastANI_maxANI_f999_balanced$species_taxid, df_fastANI_maxANI_f999_balanced$read_type)
+#            h  s
+#   34       1  1
+#   197      2  2
+#   287     12 12
+#   303      2  2
+#   347      1  1
+#   562      5  5
+#   747      1  1
+#   813      1  1
+#   979      1  1
+#   1311     3  3
+#   1314     1  1
+#   1358     1  1
+#   1423     6  6
+#   1496     3  3
+#   1520     1  1
+#   1639    30 30
+#   1717     1  1
+#   1773    22 22
+#   2104     1  1
+#   28901   23 23
+#   36809    3  3
+#   65058    2  2
+#   83262    1  1
+#   492670   2  2
+#   1444770  1  1
+saveRDS(df_fastANI_maxANI_f999_balanced, 'df_fastANI_maxANI_f999_balanced.rds')
+write.table(x = df_fastANI_maxANI_f999_balanced[,c('genomeQ','genomeR')], file = "queue_list.4.txt", quote = FALSE, row.names = FALSE, append = FALSE, sep = "\t", col.names = FALSE)
+
+
+############################################ Run script:map_reads_QR.1.r on cluster ############################################
+mkdir map_reads_QR.4/
+vim map_reads_QR.4.slurm
+#!/bin/bash
+
+#SBATCH -J map_QR.4
+#SBATCH -p dept_cpu
+#SBATCH -c 1
+#SBATCH -a 1-254%100
+
+# setup SCRDIR
+SCRDIR=/scr/${SLURM_JOB_ID}
+mkdir /scr/${SLURM_JOB_ID}
+cd $SCRDIR
+echo "SCRDIR:" /net/$SLURMD_NODENAME/scr/${SLURM_JOB_ID}
+
+# get var
+genomeIDq=`awk -F'\t' 'NR == x { print $1 }' x=$SLURM_ARRAY_TASK_ID queue_list.4.txt`
+genomeIDr=`awk -F'\t' 'NR == x { print $2 }' x=$SLURM_ARRAY_TASK_ID queue_list.4.txt`
+echo "Job running ... ${genomeIDq}, ${genomeIDr}, map_reads_QR.4"
+
+outdir=map_reads_QR.4/
+if [[ -f map_reads_QR.4/${genomeIDq}_${genomeIDr}_hit_table.rds ]]; then
+	echo -e "Result data exist: $SLURM_ARRAY_TASK_ID\t${genomeIDq}_${genomeIDr}"
+elif [[ -f download_reads.1.out/${genomeIDq}_trimDNA.fasta.gz ]]; then
+	echo "${genomeIDq}_trimDNA.fasta.gz exist"
+	if [[ -f source_data_04112026/genomic.fna/${genomeIDq}.fna.gz ]]; then
+		rsync -avz --progress source_data_04112026/genomic.fna/${genomeIDq}.fna.gz ${SCRDIR}/
+	else
+		rsync -avz --progress fetch_source_data.3.r assembly_summary_complete_1ctg_hs.rds ${SCRDIR}/
+		Rscript fetch_source_data.3.r assembly_summary_complete_1ctg_hs.rds ${genomeIDq} ftp_path fna
+	fi
+	if [[ -f source_data_04112026/genomic.fna/${genomeIDr}.fna.gz ]]; then
+		rsync -avz --progress source_data_04112026/genomic.fna/${genomeIDr}.fna.gz ${SCRDIR}/
+	else
+		rsync -avz --progress fetch_source_data.3.r assembly_summary_complete_1ctg_hs.rds ${SCRDIR}/
+		Rscript fetch_source_data.3.r assembly_summary_complete_1ctg_hs.rds ${genomeIDr} ftp_path fna
+	fi
+	rsync -av download_reads.1.out/${genomeIDq}_trimDNA.fasta.gz map_reads_QR.1.r ${SCRDIR}/
+	# Run R script
+	cd $SCRDIR
+	time Rscript map_reads_QR.1.r --reads=${genomeIDq}_trimDNA.fasta.gz --genomeR=${genomeIDr}.fna.gz --genomeQ=${genomeIDq}.fna.gz --K=8 --proc=1
+	rsync -av *.rds ${outdir}
+else
+	echo -e "${genomeIDq}_trimDNA.fasta.gz NOT exist...\t$SLURM_ARRAY_TASK_ID\t${genomeIDq}\t${genomeIDr}"
+fi
+
+# clean files
+trap "rm -r $SCRDIR" EXIT
+
+# echo information
+echo $SLURM_SUBMIT_DIR
+echo $SLURMD_NODENAME
+echo $SLURM_JOB_ID
+echo "${genomeIDq}, ${genomeIDr}, map_reads_QR.4"
+########### END OF SCRIPT ###########
+# run slurm
+mkdir runSlurm_map_reads_QR.4/
+cd runSlurm_map_reads_QR.4/
+sbatch map_reads_QR.4.slurm
+
+cd runSlurm_map_reads_QR.4/; grep -h '# Results:' * | sed -E 's/# Results:\t//g' | sort -u > map_reads_QR.4.tsv
+
+
+# read results into R
+map_reads_QR.4 <- read.table('map_reads_QR.4.tsv', sep="\t", quote="", header=FALSE, fill=TRUE, col.names=c('genomeQ', 'genomeR', 'frac_mapped_Q', 'frac_mapped_R', 'QnR', 'Qonly', 'Ronly', 'non','discarded', 'frac_Ronly'))
+dim(map_reads_QR.4) # [1] 148 10
+
+map_reads_QR.4_merge <- merge(df_fastANI_maxANI_f999_balanced, map_reads_QR.4, by = 'genomeQ')
+saveRDS(map_reads_QR.4_merge, 'map_reads_QR.4_merge.rds')
+
+
+##### Figure 5A #####
+## run K-S test
+df <- map_reads_QR.4_merge
+ks_test_sgth <- ks.test(df[df$read_type=='s', 'frac_Ronly'], df[df$read_type=='h', 'frac_Ronly'], alternative = "less")
+# 	Asymptotic two-sample Kolmogorov-Smirnov test
+
+# data:  df_map_reads_sh$frac_Ronly and df_map_reads_hh$frac_Ronly
+# D^- = 0.28976, p-value = 1.47e-06
+# alternative hypothesis: the CDF of x lies below that of y
+
+
+# plot CDFs
+col_map_seqTech <- c(
+  sh = "#7570b3",   # blue
+  hh = "#d95f02"   # orange
+)
+# full range
+pdf(file = "CDF_frac_Ronly.1.pdf", width = 4, height = 4.6)
+plot(NA, xlim = c(0,0.9), ylim = c(0, 1), xlab = "Percent of reads only mapped to partner genome", ylab = "Cumulative probability", main = paste0("Fig5A.\nCDFs of percent reads omitted\n", "KS test s > h, p-value=", round(ks_test_sgth$p.value,6)))
+plot(ecdf(df[df$read_type=='h', 'frac_Ronly']*100), verticals=TRUE, pch=NA, col=col_map_seqTech['hh'], lwd=2, col.01line = NA, add=TRUE)
+segments(x0=max(df[df$read_type=='h', 'frac_Ronly'])*100, x1=1, y0=1.0, y1=1.0, col=col_map_seqTech['hh'], lwd=2)
+plot(ecdf(df[df$read_type=='s', 'frac_Ronly']*100), verticals=TRUE, pch=NA, col=col_map_seqTech['sh'], lwd=2, col.01line = NA, add=TRUE)
+legend("bottomright", legend = paste0(names(col_map_seqTech), " (n = ", table(df$read_type)[c('s','h')], ")"), col = col_map_seqTech, lwd  = 2, cex  = 0.8, bty  = "n", title = "Sequencing technology")
+dev.off()
+
+
+# check ANI distributions
+df_map_reads_sh <- merge(df_map_reads_sh, as.data.frame(df_fastANI_sh_maxANI_f999[,c('genome_s', 'aveANI')]), by.x='genomeQ', by.y='genome_s', all.x=TRUE)
+df_map_reads_hh <- merge(df_map_reads_hh, as.data.frame(df_fastANI_hh_maxANI_f999[,c('Genome', 'aveANI')]), by.x='genomeQ', by.y='Genome', all.x=TRUE)
+
+summary(df_map_reads_sh$aveANI)
+#    Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+#   99.90   99.95   99.98   99.97   99.99  100.00 
+summary(df_map_reads_hh$aveANI)
+#    Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+#   99.90   99.97   99.99   99.98  100.00  100.00 
+
+pdf(file = "CDF_aveANI.1.pdf", width = 4, height = 4.6)
+plot(NA, xlim = c(99.9,100), ylim = c(0, 1), xlab = "aveANI(%)", ylab = "Cumulative probability", main = "FigS?.\nCDFs of aveANI by seqTech pair")
+plot(ecdf(df_map_reads_hh$aveANI), verticals=TRUE, pch=NA, col=col_map_seqTech['hh'], lwd=2, col.01line = NA, add=TRUE)
+plot(ecdf(df_map_reads_sh$aveANI), verticals=TRUE, pch=NA, col=col_map_seqTech['sh'], lwd=2, col.01line = NA, add=TRUE)
+legend("topleft", legend = paste0(c('sh','hh'), " (n = ", c(length(df_map_reads_sh$aveANI), length(df_map_reads_hh$aveANI)) , ")"), col = col_map_seqTech[c('sh','hh')], lwd  = 2, cex  = 0.8, bty  = "n", title = "Sequencing technology")
+dev.off()
+
+ks.test(df_map_reads_hh$aveANI, df_map_reads_sh$aveANI)
+# 	Asymptotic two-sample Kolmogorov-Smirnov test
+
+# data:  df_map_reads_hh$aveANI and df_map_reads_sh$aveANI
+# D = 0.16372, p-value = 0.02749
+# alternative hypothesis: two-sided
+
+wilcox.test(df_map_reads_hh$aveANI, df_map_reads_sh$aveANI) 
+# 	Wilcoxon rank sum test with continuity correction
+
+# data:  df_map_reads_hh$aveANI and df_map_reads_sh$aveANI
+# W = 14662, p-value = 0.03193
+# alternative hypothesis: true location shift is not equal to 0
+
+
+<date>2026/05/18</date>
+
+df_map_reads_hh.2 <- df_map_reads_hh[df_map_reads_hh$frac_mapped_Q>=0.99,]
+df_map_reads_sh.2 <- df_map_reads_sh[df_map_reads_sh$frac_mapped_Q>=0.99,]
+
+## run K-S test
+ks_test <- ks.test(df_map_reads_sh.2$frac_Ronly, df_map_reads_hh.2$frac_Ronly, alternative = "less")
+# 	Asymptotic two-sample Kolmogorov-Smirnov test
+
+# data:  df_map_reads_sh.2$frac_Ronly and df_map_reads_hh.2$frac_Ronly
+# D^- = 0.2773, p-value = 5.388e-06
+# alternative hypothesis: the CDF of x lies below that of y
+
+# full range
+pdf(file = "CDF_frac_Ronly.2.pdf", width = 4, height = 4.6)
+plot(NA, xlim = c(0,max(c(df_map_reads_hh.2$frac_Ronly*100, df_map_reads_sh.2$frac_Ronly*100))), ylim = c(0, 1), xlab = "Percent of reads mapped to partner genome only (%)", ylab = "Cumulative probability", main = paste0("Fig5C.\nCDFs of percent reads mapped to R only\nKS test p-value=5.388e-06"))
+plot(ecdf(df_map_reads_hh.2$frac_Ronly*100), verticals=TRUE, pch=NA, col=col_map_seqTech['hh'], lwd=2, col.01line = NA, add=TRUE)
+segments(x0=max(df_map_reads_hh.2$frac_Ronly)*100, x1=1, y0=1.0, y1=1.0, col=col_map_seqTech['hh'], lwd=2)
+plot(ecdf(df_map_reads_sh.2$frac_Ronly*100), verticals=TRUE, pch=NA, col=col_map_seqTech['sh'], lwd=2, col.01line = NA, add=TRUE)
+legend("bottomright", legend = paste0(c('sh','hh'), " (n = ", c(length(df_map_reads_sh.2$frac_Ronly), length(df_map_reads_hh.2$frac_Ronly)) , ")"), col = col_map_seqTech[c('sh','hh')], lwd  = 2, cex  = 0.8, bty  = "n", title = "Sequencing technology")
+dev.off()

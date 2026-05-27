@@ -1,0 +1,185 @@
+Analysis_ANI_vs_content_shared.txt
+
+Shu-Ting Cho <shutingcho@pitt.edu>
+
+# Comparing genome sequence similarity (ANI) vs. genome content shared
+# Figure 2AB
+
+
+refseq_bacteria_assembly_summary_04112026 <- readRDS('Collecting_genomes_and_metadata/refseq_bacteria_assembly_summary_04112026.rds')
+
+# list of genomes: complete, single contig, no ambiguity, has genus information
+refseq_bacteria_assembly_summary_04112026_complete <- refseq_bacteria_assembly_summary_04112026[refseq_bacteria_assembly_summary_04112026$assembly_level=='Complete Genome' & refseq_bacteria_assembly_summary_04112026$contig_count==1 & refseq_bacteria_assembly_summary_04112026$n_ambig_bases==0 & !is.na(refseq_bacteria_assembly_summary_04112026$genus),]
+saveRDS(refseq_bacteria_assembly_summary_04112026_complete, 'refseq_bacteria_assembly_summary_04112026_complete.rds')
+
+
+# genus count
+genus_count <- table(refseq_bacteria_assembly_summary_04112026_complete$genus)
+length(genus_count[genus_count>=50])
+[1] 88
+valid_genera <- names(genus_count[genus_count >= 50])
+# subset and sample
+assembly_summary_04112026_1ctg_s50 <- do.call(rbind, lapply(valid_genera, function(g) {
+  rows <- refseq_bacteria_assembly_summary_04112026_complete[
+    refseq_bacteria_assembly_summary_04112026_complete$genus == g, ]
+  rows[sample(nrow(rows), 50), ]
+}))
+nrow(assembly_summary_04112026_1ctg_s50)
+[1] 4400
+genomeIDs_complete_sampled <- assembly_summary_04112026_1ctg_s50$genomeID
+writeLines(genomeIDs_complete_sampled, "queue_list.2.txt")
+saveRDS(assembly_summary_04112026_1ctg_s50, 'assembly_summary_04112026_1ctg_s50.rds')
+
+# get list of genome pairs
+output <- file('queue_list.3.txt', open = "a")
+for (genus_i in seq_along(valid_genera)) {
+    genus_h <- valid_genera[genus_i]
+    genomeIDs_h <- assembly_summary_04112026_1ctg_s50[assembly_summary_04112026_1ctg_s50$genus == genus_h, "genomeID"]
+    combinations <- combn(genomeIDs_h, 2)
+    # build all output lines at once then write once per genus
+    lines <- apply(combinations, 2, function(x) paste(genus_h, x[1], x[2], sep = "\t"))
+    writeLines(lines, output)
+    cat(sprintf("[%d/%d] %s - %d genomes, %d pairs\n", genus_i, length(valid_genera), genus_h, length(genomeIDs_h), ncol(combinations)))
+}
+close(output)
+wc -l queue_list.3.txt
+  107800 queue_list.3.txt
+
+
+###### run script on cluster: save source_data (fna and gff) ######
+mkdir -p source_data_04112026/genomic.fna/ source_data_04112026/genomic.gff/
+vim source_data.slurm
+#!/bin/bash
+
+#SBATCH -J source_data
+#SBATCH -p dept_cpu
+#SBATCH -c 1
+#SBATCH -a 0-4399%40
+#SBATCH --exclude=n121
+
+# setup SCRDIR
+SCRDIR=/scr/${SLURM_JOB_ID}
+mkdir /scr/${SLURM_JOB_ID}
+cd $SCRDIR
+echo "SCRDIR:" /net/$SLURMD_NODENAME/scr/${SLURM_JOB_ID}
+
+List=`cat queue_list.2.txt`
+arr=($List)
+genomeID=${arr[$SLURM_ARRAY_TASK_ID]}
+echo "genomeID: " $genomeID
+
+# transfer files
+rsync -av fetch_source_data.3.r refseq_bacteria_assembly_summary_04112026.rds ${SCRDIR}/
+
+# run script
+Rscript fetch_source_data.3.r refseq_bacteria_assembly_summary_04112026.rds ${genomeID} ftp_path fna gff
+# check output
+if [[ -f "${genomeID}.fna.gz" ]]; then
+	rsync -av ${genomeID}.fna.gz source_data_04112026/genomic.fna/
+	echo -e "#DONE_fna\t${genomeID}"
+else
+	echo -e "#FAILED_fna\t${genomeID}"
+fi
+if [[ -f "${genomeID}.gff.gz" ]]; then
+	rsync -av ${genomeID}.gff.gz source_data_04112026/genomic.gff/
+	echo -e "#DONE_gff\t${genomeID}"
+else
+	echo -e "#FAILED_gff\t${genomeID}"
+fi
+
+# clean files
+trap "rm -r $SCRDIR" EXIT
+
+# echo information
+echo $SLURM_SUBMIT_DIR
+echo $SLURMD_NODENAME
+echo $SLURM_JOB_ID
+echo $SLURM_ARRAY_TASK_ID
+echo "source_data"
+########### END OF SCRIPT ###########
+# run slurm
+mkdir runSlurm_source_data/; cd runSlurm_source_data/; sbatch source_data.slurm
+
+
+###### run script on cluster: fastANI ######
+mkdir fastANI/
+vim fastANI.slurm
+#!/bin/bash
+
+#SBATCH -J fastANI
+#SBATCH -p dept_cpu
+#SBATCH -c 1
+#SBATCH -a 1-1078%50
+
+# setup SCRDIR
+SCRDIR=/scr/${SLURM_JOB_ID}
+mkdir /scr/${SLURM_JOB_ID}
+cd $SCRDIR
+echo "SCRDIR:" /net/$SLURMD_NODENAME/scr/${SLURM_JOB_ID}
+echo "My SLURM_ARRAY_TASK_ID: " $SLURM_ARRAY_TASK_ID
+
+start_i=$(($SLURM_ARRAY_TASK_ID*100-99))
+end_i=$(($SLURM_ARRAY_TASK_ID*100))
+echo "# Processing rows:" ${start_i} ${end_i}
+for row_i in $(seq ${start_i} ${end_i}); do
+	echo "##### Processing row number: " ${row_i}
+	genus=`awk -F'\t' 'NR == x { print $1 }' x=$row_i queue_list.3.txt`
+	GenomeA=`awk -F'\t' 'NR == x { print $2 }' x=$row_i queue_list.3.txt`
+	GenomeB=`awk -F'\t' 'NR == x { print $3 }' x=$row_i queue_list.3.txt`
+	echo "Job start: " ${genus} ${GenomeA} ${GenomeB}
+	# move files
+	rsync -av source_data_04112026/genomic.fna/${GenomeA}.fna.gz source_data_04112026/genomic.fna/${GenomeB}.fna.gz ${SCRDIR}/
+	# run fastANI and calc_asym_X for A -> B
+	fastANI -q ${GenomeA}.fna.gz -r ${GenomeB}.fna.gz -o ${genus}_${GenomeA}_${GenomeB}_fastANI
+	# run fastANI and calc_asym_X for B -> A
+	fastANI -q ${GenomeB}.fna.gz -r ${GenomeA}.fna.gz -o ${genus}_${GenomeB}_${GenomeA}_fastANI
+	# check output
+	if [[ -s "./${genus}_${GenomeA}_${GenomeB}_fastANI" ]] && [[ -s "./${genus}_${GenomeB}_${GenomeA}_fastANI" ]]; then
+		echo "Job done, $SLURM_ARRAY_TASK_ID, ${row_i}, ${genus}, ${GenomeA}, ${GenomeB}, fastANI"
+		cat *_fastANI > fastANI_cat.txt
+		# calculate values
+		awk -v genus="$genus" '
+		BEGIN {FS=OFS="\t"}
+		
+		NR==1{
+			GenomeA=$1; GenomeB=$2; ANI_AB=$3; C1=$4; S1=$5;
+		}
+		NR==2{
+			ANI_BA=$3; C2=$4; S2=$5;
+
+			if(S1+S2>0){
+				aveANI=(ANI_AB+ANI_BA)/2;
+				ave_genome_shared=(C1+C2)*100/(S1+S2);
+				shared_skew=((C1/S1)-(C2/S2))*100; if(shared_skew<0) shared_skew=-shared_skew;
+				length_skew=(S1-S2); if(length_skew<0) length_skew=-length_skew;
+				length_skew=length_skew*100/((S1+S2)/2);
+				print "Result_fastANI",genus,GenomeA,GenomeB,ANI_AB,C1,S1,ANI_BA,C2,S2,aveANI,ave_genome_shared,shared_skew,length_skew
+			}
+			else{
+				print "# Division by zero:",genus,GenomeA,GenomeB
+			}
+		}' fastANI_cat.txt > fastANI_result.txt
+		cat fastANI_result.txt
+	else
+		echo "Job failed, $SLURM_ARRAY_TASK_ID, ${row_i}, ${genus}, ${GenomeA}, ${GenomeB}, fastANI"
+	fi
+	rm *
+done
+
+# clean files
+trap "rm -r $SCRDIR" EXIT
+
+# echo information
+echo $SLURM_SUBMIT_DIR
+echo $SLURMD_NODENAME
+echo $SLURM_JOB_ID
+echo $SLURM_ARRAY_TASK_ID
+########### END OF SCRIPT ###########
+# run slurm
+mkdir runSlurm_fastANI/; cd runSlurm_fastANI/; sbatch fastANI.slurm
+
+# concat results
+grep -h 'Result_fastANI' * | sed 's/.fna.gz//g' > fastANI.tsv
+
+# read fastANI result into R
+fastANI_fl3000 <- read.table('fastANI.tsv', sep="\t", quote="", header=FALSE, fill=TRUE, col.names=c("Result_Header","Genus","GenomeA","GenomeB","ANI_AB","C1","S1","ANI_BA","C2","S2","aveANI","ave_genome_shared","shared_skew","length_skew"))[,c(2:14)]
