@@ -130,17 +130,11 @@ df_fastANI.2_maxANI <- df_fastANI.2 %>%
 	filter(aveANI == max(aveANI)) %>%
 	slice(1) %>%  # break ties
 	ungroup()
-dim(df_fastANI.2_maxANI) # [1] 472   9
+dim(df_fastANI.2_maxANI) # [1] 491   9
 df_fastANI.2_maxANI_f999 <- df_fastANI.2_maxANI[df_fastANI.2_maxANI$aveANI>=99.9,] # High ANI (>=99.9%) partner genomeR (h) for each genomeQ (s or h)
-dim(df_fastANI.2_maxANI_f999) # [1] 362   9
-
-# For genomeQ without a partner found, search for genomeR again in the same genus
-# Result: cat_fastANI.3.tsv, df_fastANI.3_maxANI_f999
-
-# combine results
-df_fastANI_maxANI_f999 <- rbind(df_fastANI.2_maxANI_f999, df_fastANI.3_maxANI_f999)
+df_fastANI_maxANI_f999 <- df_fastANI.2_maxANI_f999
 dim(df_fastANI_maxANI_f999)
-[1] 368   9
+[1] 268   9
 
 df_fastANI_maxANI_f999 <- merge(df_fastANI_maxANI_f999, assembly_summary_complete_1ctg_hs[, c('genomeID', 'read_type', 'species_taxid')], by.x = 'genomeQ', by.y = 'genomeID')
 saveRDS(df_fastANI_maxANI_f999, 'df_fastANI_maxANI_f999.rds')
@@ -166,34 +160,26 @@ df_fastANI_maxANI_f999_balanced <- df_fastANI_maxANI_f999 %>%
 # Verify balance
 table(df_fastANI_maxANI_f999_balanced$read_type)
 #   h   s 
-# 127 127
-table(df_fastANI_maxANI_f999_balanced$species_taxid, df_fastANI_maxANI_f999_balanced$read_type)
-#            h  s
-#   34       1  1
-#   197      2  2
-#   287     12 12
-#   303      2  2
-#   347      1  1
-#   562      5  5
-#   747      1  1
-#   813      1  1
-#   979      1  1
-#   1311     3  3
-#   1314     1  1
-#   1358     1  1
-#   1423     6  6
-#   1496     3  3
-#   1520     1  1
-#   1639    30 30
-#   1717     1  1
-#   1773    22 22
-#   2104     1  1
-#   28901   23 23
-#   36809    3  3
-#   65058    2  2
-#   83262    1  1
-#   492670   2  2
-#   1444770  1  1
+# 107 107 
+# table(df_fastANI_maxANI_f999_balanced$species_taxid, df_fastANI_maxANI_f999_balanced$read_type)
+#           h  s
+#   197     2  2
+#   287     7  7
+#   347     1  1
+#   562     5  5
+#   747     1  1
+#   813     1  1
+#   1311    2  2
+#   1314    1  1
+#   1423    6  6
+#   1496    3  3
+#   1639   30 30
+#   1773   22 22
+#   2104    1  1
+#   28901  18 18
+#   36809   3  3
+#   65058   2  2
+#   492670  2  2
 saveRDS(df_fastANI_maxANI_f999_balanced, 'df_fastANI_maxANI_f999_balanced.rds')
 write.table(x = df_fastANI_maxANI_f999_balanced[,c('genomeQ','genomeR')], file = "queue_list.4.txt", quote = FALSE, row.names = FALSE, append = FALSE, sep = "\t", col.names = FALSE)
 

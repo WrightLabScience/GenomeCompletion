@@ -1,0 +1,27 @@
+categoryID	group	color	description
+J	J	INFORMATION STORAGE AND PROCESSING	#FCCCFC	Translation, ribosomal structure and biogenesis
+A	A	INFORMATION STORAGE AND PROCESSING	#FCDCFC	RNA processing and modification
+K	K	INFORMATION STORAGE AND PROCESSING	#FCDCEC	Transcription
+L	L	INFORMATION STORAGE AND PROCESSING	#FCDCDC	Replication, recombination and repair
+B	B	INFORMATION STORAGE AND PROCESSING	#FCDCCC	Chromatin structure and dynamics
+D	D	CELLULAR PROCESSES AND SIGNALING	#FCFCCC	Cell cycle control, cell division, chromosome partitioning
+Y	Y	CELLULAR PROCESSES AND SIGNALING	#FCFCBC	Nuclear structure
+V	V	CELLULAR PROCESSES AND SIGNALING	#FCFCAC	Defense mechanisms
+T	T	CELLULAR PROCESSES AND SIGNALING	#ECFCAC	Signal transduction mechanisms
+M	M	CELLULAR PROCESSES AND SIGNALING	#DCFCAC	Cell wall/membrane/envelope biogenesis
+N	N	CELLULAR PROCESSES AND SIGNALING	#CCFCAC	Cell motility
+Z	Z	CELLULAR PROCESSES AND SIGNALING	#BCFCAC	Cytoskeleton
+W	W	CELLULAR PROCESSES AND SIGNALING	#ACFCAC	Extracellular structures
+U	U	CELLULAR PROCESSES AND SIGNALING	#9CFCAC	Intracellular trafficking, secretion, and vesicular transport
+O	O	CELLULAR PROCESSES AND SIGNALING	#9CFC9C	Posttranslational modification, protein turnover, chaperones
+X	X	CELLULAR PROCESSES AND SIGNALING	#3cb44b	Mobilome: prophages, transposons
+C	C	METABOLISM	#BCFCFC	Energy production and conversion
+G	G	METABOLISM	#CCFCFC	Carbohydrate transport and metabolism
+E	E	METABOLISM	#DCFCFC	Amino acid transport and metabolism
+F	F	METABOLISM	#DCECFC	Nucleotide transport and metabolism
+H	H	METABOLISM	#DCDCFC	Coenzyme transport and metabolism
+I	I	METABOLISM	#DCCCFC	Lipid transport and metabolism
+P	P	METABOLISM	#CCCCFC	Inorganic ion transport and metabolism
+Q	Q	METABOLISM	#BCCCFC	Secondary metabolites biosynthesis, transport and catabolism
+R	R	POORLY CHARACTERIZED	#E0E0E0	General function prediction only
+S	S	POORLY CHARACTERIZED	#CCCCCC	Function unknown

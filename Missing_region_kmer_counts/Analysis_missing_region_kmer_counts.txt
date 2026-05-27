@@ -1,0 +1,141 @@
+Analysis_missing_region_kmer_counts.txt
+
+Shu-Ting Cho <shutingcho@pitt.edu>
+
+# Investigating putative missing region by comparing k-mer counts between reads and assembly
+# Figure 5CD
+
+
+# Run on balanced dataset: complete, no amb, single contig, single Illumina PE SRA, >=95% genome mapped, >= 50% reads mapped
+assembly_summary_complete_1ctg_hs <- readRDS('Repeat_collapse_read_cov/assembly_summary_complete_1ctg_hs.rds')
+frac_high_cov.1_merge_f95_balanced <- readRDS('Repeat_collapse_read_cov/frac_high_cov.1_merge_f95_balanced.rds')
+table(frac_high_cov.1_merge_f95_balanced$read_type)
+  h   s 
+249 249
+writeLines(frac_high_cov.1_merge_f95_balanced$genomeID, 'queue_list.1.txt')
+
+######################################### Run script:IdentifyMissingReads.7.r on cluster #########################################
+# run SearchIndex on cluster
+mkdir kmer_counts.7/
+vim kmer_counts.7.slurm
+#!/bin/bash
+
+#SBATCH -J kmer_counts.7
+#SBATCH -p dept_cpu
+#SBATCH -c 1
+#SBATCH -a 0-497
+
+# setup SCRDIR
+SCRDIR=/scr/${SLURM_JOB_ID}
+mkdir /scr/${SLURM_JOB_ID}
+cd $SCRDIR
+echo "SCRDIR:" /net/$SLURMD_NODENAME/scr/${SLURM_JOB_ID}
+
+# get var
+List=`cat queue_list.1.txt`
+arr=($List)
+genomeID=${arr[$SLURM_ARRAY_TASK_ID]}
+echo "Job running ... ${genomeID}, kmer_counts.7"
+
+if [[ -f kmer_counts.7/${genomeID}.pdf ]]; then
+	echo -e "Result data exist: $SLURM_ARRAY_TASK_ID\t${genomeID}"
+elif [[ -f download_reads.1.out/${genomeID}_trimDNA.fasta.gz ]]; then
+	echo "${genomeID}_trimDNA.fasta.gz exist"
+	rsync -av download_reads.1.out/${genomeID}_trimDNA.fasta.gz IdentifyMissingReads.7.r ${SCRDIR}/
+	if [[ -f source_data_04112026/genomic.fna/${genomeID}.fna.gz ]]; then
+		rsync -avz --progress source_data_04112026/genomic.fna/${genomeID}.fna.gz ${SCRDIR}/
+	else
+		rsync -avz --progress fetch_source_data.3.r assembly_summary_complete_1ctg_hs.rds ${SCRDIR}/
+		Rscript fetch_source_data.3.r assembly_summary_complete_1ctg_hs.rds ${genomeID} ftp_path fna
+	fi
+	genome_file=${genomeID}.fna.gz
+	# Run R script
+	cd $SCRDIR
+	time Rscript IdentifyMissingReads.7.r --genome_file="${genome_file}" --short_read_file="${genomeID}_trimDNA.fasta.gz" --save_plot
+  time Rscript IdentifyMissingReads.7.r --genome_file="${genome_file}" --short_read_file="${genomeID}_trimDNA.fasta.gz" --MAX_COVERAGE=100 --save_plot
+	time Rscript IdentifyMissingReads.7.r --genome_file="${genome_file}" --short_read_file="${genomeID}_trimDNA.fasta.gz" --MAX_COVERAGE=500 --save_plot
+	rsync -av *.pdf kmer_counts.7/
+	# save fna
+	if [[ -f source_data_04112026/genomic.fna/${genomeID}.fna.gz ]]; then
+		echo "fna EXIST: ${genomeID}.fna.gz"
+	else
+		rsync -avz --progress ${genomeID}.fna.gz source_data_04112026/genomic.fna/
+	fi
+else
+	echo -e "${genomeID}_trimDNA.fasta.gz NOT exist...\t$SLURM_ARRAY_TASK_ID\t${genomeID}"
+fi
+
+# clean files
+trap "rm -r $SCRDIR" EXIT
+
+# echo information
+echo $SLURM_SUBMIT_DIR
+echo $SLURMD_NODENAME
+echo $SLURM_JOB_ID
+echo "${genomeID}, kmer_counts.7"
+########### END OF SCRIPT ###########
+# run slurm
+mkdir runSlurm_kmer_counts.7/
+cd runSlurm_kmer_counts.7/
+sbatch kmer_counts.7.slurm
+
+# concat result
+cd runSlurm_kmer_counts.7/; grep -h '### Result_Kmer' * | sed -E 's/### Result_Kmer\t//g' | sort -u > IdentifyMissingReads.7.tsv
+
+# Read result in R
+IdentifyMissingReads.7 <- read.table('IdentifyMissingReads.7.tsv', sep="\t", quote="", header=FALSE, fill=TRUE, col.names=c('genomeID', 'MAX_COVERAGE', 'K', 'mapped_fraction', 'coverage', 'w', 'par_mult', 'par_size', 'par_mean', 'fitted_SSE', 'threshold', 'genome_size', 'bases_missing', 'frac_missing'))
+
+# use original coverage without reads subsampling 
+IdentifyMissingReads.7.covInf <- IdentifyMissingReads.7[IdentifyMissingReads.7$MAX_COVERAGE=='Inf',]
+IdentifyMissingReads.7.covInf_merge <- merge(IdentifyMissingReads.7.covInf, assembly_summary_complete_1ctg_hs, by='genomeID')
+IdentifyMissingReads.7.covInf_merge_balanced <- IdentifyMissingReads.7.covInf_merge[IdentifyMissingReads.7.covInf_merge$genomeID %in% frac_high_cov.1_merge_f95_balanced$genomeID, ]
+
+# mapped_fraction >= 95%
+IdentifyMissingReads.7.covInf_merge_mf95 <- IdentifyMissingReads.7.covInf_merge_balanced[IdentifyMissingReads.7.covInf_merge_balanced$mapped_fraction>=0.95,]
+dim(IdentifyMissingReads.7.covInf_merge_mf95)
+# [1] 479  64
+table(IdentifyMissingReads.7.covInf_merge_mf95$read_type)
+#   h   s 
+# 244 235 
+
+# check threshold vs coverage for fitting
+plot(IdentifyMissingReads.7$threshold, IdentifyMissingReads.7$coverage, log='xy', cex=IdentifyMissingReads.7$mapped_fraction)
+lines(qpois(1e-6, 1:1e4), 1:1e4, col="red")
+
+# keep threshold vs coverage on the leftside of the curve
+IdentifyMissingReads.7.covInf_merge_mf95$fit_threshold <- ifelse(IdentifyMissingReads.7.covInf_merge_mf95$coverage < qpois(1e-6, IdentifyMissingReads.7.covInf_merge_mf95$threshold), FALSE, TRUE)
+mean(IdentifyMissingReads.7.covInf_merge_mf95$fit_threshold)
+[1] 0.9979123
+saveRDS(IdentifyMissingReads.7.covInf_merge_mf95, 'IdentifyMissingReads.7.covInf_merge_mf95.rds')
+
+
+##### Fig 5D #####
+df <- IdentifyMissingReads.7.covInf_merge_mf95[IdentifyMissingReads.7.covInf_merge_mf95$fit_threshold,]
+dim(df)
+[1] 478  65
+table(df$read_type)
+  h   s 
+243 235
+
+## K-S test
+ks_test_sgth <- ks.test(df[df$read_type=='s', 'frac_missing'], df[df$read_type=='h', 'frac_missing'], alternative = "less")
+# 	Asymptotic two-sample Kolmogorov-Smirnov test
+
+# data:  df[df$read_type == "s", "frac_missing"] and df[df$read_type == "h", "frac_missing"]
+# D^- = 0.30188, p-value = 3.494e-10
+# alternative hypothesis: the CDF of x lies below that of y
+ks_test_sgth$p.value
+[1] 3.494376e-10
+
+# plot
+pdf(file = "CDF_Kmer.9.pdf", width = 4, height = 4.6)
+plot(NA, xlim = range(df$frac_missing*100), ylim = c(0, 1), xlab = "Estimated percentage of missing bases (%)", ylab = "Cumulative probability", main = paste0("Fig5D.\nCDFs of fract genome missing (covInf)\n", "KS test s > h, p-value=", round(ks_test_sgth$p.value,6)))
+plot(ecdf(df[df$read_type=='h', 'frac_missing']*100), verticals=TRUE, pch=NA, col=col_map_seqTech['h'], lwd=2, col.01line = NA, add=TRUE)
+segments(x0=max(df[df$read_type=='h', 'frac_missing'])*100, x1=max(df$frac_missing)*100+100, y0=1.0, y1=1.0, col=col_map_seqTech['h'], lwd=2)
+plot(ecdf(df[df$read_type=='s', 'frac_missing']*100), verticals=TRUE, pch=NA, col=col_map_seqTech['s'], lwd=2, col.01line = NA, add=TRUE)
+legend("bottomright", legend = paste0(names(col_map_seqTech), " (n = ", sapply(names(col_map_seqTech), function(x) sum(df$read_type == x)) , ")"), col = col_map_seqTech, lwd = 2, cex = 0.8, bty = "n", title = "Sequencing technology")
+dev.off()
+
+
+# Fig 5C: Example of fitting: GCF_017356805_covInf.pdf
+IdentifyMissingReads.7.r --genome_file=GCF_017356805.fna.gz --short_read_file=GCF_017356805_trimDNA.fasta.gz --save_plot

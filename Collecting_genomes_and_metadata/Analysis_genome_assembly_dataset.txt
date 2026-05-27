@@ -291,6 +291,7 @@ SeqTech_class.1 <- TechnologyLogical.1 |>
     )
   ) |>
   select(genomeID, read_type)
+saveRDS(SeqTech_class.1, 'SeqTech_class.1.rds')
 refseq_bacteria_assembly_summary_04112026 <- merge(refseq_bacteria_assembly_summary_04112026, SeqTech_class.1, by = "genomeID", all.x = TRUE)
 
 

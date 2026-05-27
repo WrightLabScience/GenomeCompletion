@@ -1,0 +1,362 @@
+Analysis_gene_content_in_missing_regions.txt
+
+Shu-Ting Cho <shutingcho@pitt.edu>
+
+# genomic content in regions not shared by high ANI genome pair
+# CDS vs. non-coding
+# COG categories enrichment
+# Figure 2CD
+
+
+# list of genomeIDs shown in Fig2A with ANI>99.9 pairs
+fastANI_fl3000_maxANI_f999 <- readRDS('ANI_vs_content_shared/fastANI_fl3000_maxANI_f999.rds')
+writeLines(unique(c(fastANI_fl3000_maxANI_f999$GenomeA, fastANI_fl3000_maxANI_f999$GenomeB)), 'queue_list.1.txt')
+
+# assembly summary
+refseq_bacteria_assembly_summary_04112026 <- readRDS('Collecting_genomes_and_metadata/refseq_bacteria_assembly_summary_04112026.rds')
+saveRDS(refseq_bacteria_assembly_summary_04112026[unique(c(fastANI_fl3000_maxANI_f999$GenomeA, fastANI_fl3000_maxANI_f999$GenomeB)),], 'assembly_summary.rds')
+
+
+# Download database for rpsblast COG (on November 24, 2025)
+mkdir cdd_11242025/; cd cdd_11242025/
+wget https://ftp.ncbi.nih.gov/pub/mmdb/cdd/little_endian/Cog_LE.tar.gz
+tar -xzf Cog_LE.tar.gz
+# file version: Mar 28  2024
+
+# Download COG names and colors
+wget https://ftp.ncbi.nih.gov/pub/COG/COG2024/data/cog-24.fun.tab
+# edit cog-24.fun.tab and save as cog-24.fun.tsv
+cog24.fun <- read.table('cog-24.fun.tsv', sep="\t", quote="", comment.char='', header=TRUE)
+rownames(cog24.fun) <- cog24.fun$categoryID
+write.table(x = cog24.fun, file = "cog24col.tsv", quote = FALSE, row.names = TRUE, append = FALSE, sep = "\t", col.names = TRUE)
+
+
+################################ run on cluster: whole proteome COG and CDS vs NC counts ###############################
+mkdir -p whole_genome_COG.1/
+vim whole_genome_COG.1.slurm
+#!/bin/bash
+
+#SBATCH -J COG1
+#SBATCH -p dept_cpu
+#SBATCH -c 1
+#SBATCH -a 0-1415%100
+
+# get var
+List=`cat queue_list.1.txt`
+arr=($List)
+genomeID=${arr[$SLURM_ARRAY_TASK_ID]}
+echo "Job running ... ${genomeID}, get_COGs"
+
+# setup SCRDIR
+SCRDIR=/scr/${SLURM_JOB_ID}
+mkdir /scr/${SLURM_JOB_ID}
+cd $SCRDIR
+echo "SCRDIR:" /net/$SLURMD_NODENAME/scr/${SLURM_JOB_ID}
+echo "My SLURM_ARRAY_TASK_ID: " $SLURM_ARRAY_TASK_ID
+outdir=whole_genome_COG.1/
+
+# transfer files
+rsync -av get_COGs.2.r count_CDS_bases.1.r cog24col.tsv assembly_summary.rds ${SCRDIR}/
+
+if [[ -f source_data_04112026/genomic.faa/${genomeID}.faa.gz ]]; then
+	rsync -av source_data_04112026/genomic.faa/${genomeID}.faa.gz ${SCRDIR}/
+fi
+if [[ -f source_data_04112026/genomic.gff/${genomeID}.gff.gz ]]; then
+	rsync -av source_data_04112026/genomic.gff/${genomeID}.gff.gz ${SCRDIR}/
+fi
+
+# Run script
+echo -e "\n# Running count_CDS_bases on ${genomeID}...\n"
+Rscript count_CDS_bases.1.r --genomeID=${genomeID} --assembly_summary=assembly_summary.rds
+echo -e "\n# Running get_COGs on ${genomeID}...\n"
+Rscript get_COGs.2.r --proteinIDs=${genomeID}_proteinIDs.txt --assembly_summary=assembly_summary.rds
+
+# check output
+if [[ -f "${genomeID}_sel_COG_df.rds" ]]; then
+	echo "Job done, ${genomeID}, get_COGs"
+	mv ${genomeID}_sel_COG_df.rds ${outdir}/
+else
+	echo "Job failed, ${genomeID}, get_COGs"
+fi
+# save source data
+if [[ ! -f source_data_04112026/genomic.faa/${genomeID}.faa.gz ]]; then
+	rsync -av ${genomeID}.faa.gz source_data_04112026/genomic.faa/
+fi
+if [[ ! -f source_data_04112026/genomic.gff/${genomeID}.gff.gz ]]; then
+	rsync -av ${genomeID}.gff.gz source_data_04112026/genomic.gff/
+fi
+
+# clean files
+trap "rm -r $SCRDIR" EXIT
+
+# echo information
+echo $SLURM_SUBMIT_DIR
+echo $SLURMD_NODENAME
+echo $SLURM_JOB_ID
+echo $SLURM_ARRAY_TASK_ID
+echo "${genomeID}, get_COGs"
+########### END OF SCRIPT ###########
+# run slurm
+mkdir runSlurm_whole_genome_COG.1/
+cd runSlurm_whole_genome_COG.1/
+sbatch whole_genome_COG.1.slurm
+
+# concat result
+cd runSlurm_whole_genome_COG.1/; grep '### Result' *.out | wc -l
+1416
+
+# combine results
+grep -h '# genomeID:' *.out | sed -E 's/# genomeID: (GCF_[0-9]+) ; total_CDS_count: ([0-9]+) ; unique_CDS_count: ([0-9]+) /\1\t\2\t\3/g' > whole_genome_COG.1.res1.tsv
+grep -h '# genomeID (genome_size):' *.out | sed -E 's/# genomeID \(genome_size\): GCF_[0-9]+ ([0-9]+) ; total_CDS_bases \(count\/frac\): ([0-9]+) (\S+) ; total_NC_bases \(count\/frac\): ([0-9]+) (\S+) /\1\t\2\t\3\t\4\t\5/g' > whole_genome_COG.1.res2.tsv
+grep -h '### Result' *.out | sed -E 's/### Result\t\S+\t\S+\t//g' > whole_genome_COG.1.res3.tsv
+echo -e "genomeID\ttotal_CDS_count\tunique_CDS_count\tgenome_size\tCDS_bases\tCDS_frac\tNC_bases\tNC_frac\tJ\tA\tK\tL\tB\tD\tY\tV\tT\tM\tN\tZ\tW\tU\tO\tX\tC\tG\tE\tF\tH\tI\tP\tQ\tR\tS\tnoCOG" > whole_genome_COG.1.tsv
+paste whole_genome_COG.1.res1.tsv whole_genome_COG.1.res2.tsv whole_genome_COG.1.res3.tsv >> whole_genome_COG.1.tsv
+
+
+
+# for unmapped coding vs NC and COGs, make list, maxANI pairs in Fig2A w/ >99.9 ANI
+write.table(x = unique(fastANI_fl3000_maxANI_f999[, c("GenomeA", "GenomeB")]), file = "queue_list.2.txt", quote = FALSE, row.names = FALSE, append = FALSE, sep = "\t", col.names = FALSE)
+
+######################################### Run script:unmap_annot.2.r on cluster #########################################
+# find unmap regions, get gff
+mkdir -p unmap_annot.2/
+vim unmap_annot.2.slurm
+#!/bin/bash
+
+#SBATCH -J unmap_annot
+#SBATCH -p dept_cpu
+#SBATCH -c 1
+#SBATCH -a 1-938%100
+
+# setup SCRDIR
+SCRDIR=/scr/${SLURM_JOB_ID}
+mkdir /scr/${SLURM_JOB_ID}
+cd $SCRDIR
+echo "SCRDIR:" /net/$SLURMD_NODENAME/scr/${SLURM_JOB_ID}
+echo "My SLURM_ARRAY_TASK_ID: " $SLURM_ARRAY_TASK_ID
+outdir=unmap_annot.2/
+
+GenomeA=`awk -F'\t' 'NR == x { print $1 }' x=$SLURM_ARRAY_TASK_ID queue_list.2.txt`
+GenomeB=`awk -F'\t' 'NR == x { print $2 }' x=$SLURM_ARRAY_TASK_ID queue_list.2.txt`
+echo "Job running ... ${GenomeA}, ${GenomeB}, unmap_annot"
+
+# transfer files
+rsync -av unmap_annot.2.r get_COGs.3.r cog24col.tsv assembly_summary.rds ~/project/proj03/proj03.27/calc_asym_X.2/${GenomeA}_${GenomeB}.rds ~/project/proj03/proj03.27/calc_asym_X.2/${GenomeB}_${GenomeA}.rds ${SCRDIR}/
+if [[ -f source_data_04112026/genomic.gff/${GenomeA}.gff.gz ]]; then
+	rsync -av source_data_04112026/genomic.gff/${GenomeA}.gff.gz ${SCRDIR}/
+fi
+if [[ -f source_data_04112026/genomic.gff/${GenomeB}.gff.gz ]]; then
+	rsync -av source_data_04112026/genomic.gff/${GenomeB}.gff.gz ${SCRDIR}/
+fi
+if [[ -f source_data_04112026/genomic.faa/${GenomeA}.faa.gz ]]; then
+	rsync -av source_data_04112026/genomic.faa/${GenomeA}.faa.gz ${SCRDIR}/
+fi
+if [[ -f source_data_04112026/genomic.faa/${GenomeB}.faa.gz ]]; then
+	rsync -av source_data_04112026/genomic.faa/${GenomeB}.faa.gz ${SCRDIR}/
+fi
+
+# A->B
+Rscript unmap_annot.2.r --genomeQ=${GenomeA} --genomeR=${GenomeB} --ir_gaps_query=${GenomeA}_${GenomeB}.rds --assembly_summary=assembly_summary.rds
+# check output
+if [[ -f "./${GenomeA}_${GenomeB}_unmapped_gff.rds" ]]; then
+	echo "Job done AB, ${GenomeA}, ${GenomeB}, unmap_annot"
+	rsync -avz --progress ${GenomeA}_${GenomeB}_unmapped_gff.rds ${GenomeA}_${GenomeB}_protein_id.tsv ${outdir}
+	Rscript get_COGs.3.r --protein_id_tsv=${GenomeA}_${GenomeB}_protein_id.tsv --assembly_summary=assembly_summary.rds
+	rsync -avz --progress ${GenomeA}_${GenomeB}_unmapped_COG_df.rds ${GenomeA}_${GenomeB}.faa.gz ${outdir}
+else
+	echo "Job failed AB, ${GenomeA}, ${GenomeB}, unmap_annot"
+fi
+
+# B->A
+Rscript unmap_annot.2.r --genomeQ=${GenomeB} --genomeR=${GenomeA} --ir_gaps_query=${GenomeB}_${GenomeA}.rds --assembly_summary=assembly_summary.rds
+# check output
+if [[ -f "./${GenomeB}_${GenomeA}_unmapped_gff.rds" ]]; then
+	echo "Job done BA, ${GenomeB}, ${GenomeA}, unmap_annot"
+	rsync -avz --progress ${GenomeB}_${GenomeA}_unmapped_gff.rds ${GenomeB}_${GenomeA}_protein_id.tsv ${outdir}
+	Rscript get_COGs.3.r --protein_id_tsv=${GenomeB}_${GenomeA}_protein_id.tsv --assembly_summary=assembly_summary.rds
+	rsync -avz --progress ${GenomeB}_${GenomeA}_unmapped_COG_df.rds ${GenomeB}_${GenomeA}.faa.gz ${outdir}
+else
+	echo "Job failed BA, ${GenomeB}, ${GenomeA}, unmap_annot"
+fi
+
+# clean files
+trap "rm -r $SCRDIR" EXIT
+
+# echo information
+echo $SLURM_SUBMIT_DIR
+echo $SLURMD_NODENAME
+echo $SLURM_JOB_ID
+echo $SLURM_ARRAY_TASK_ID
+echo "${GenomeA}, ${GenomeB}, unmap_annot"
+########### END OF SCRIPT ###########
+# run slurm
+mkdir runSlurm_unmap_annot.2/
+cd runSlurm_unmap_annot.2/
+sbatch unmap_annot.2.slurm
+
+# concat results for Fig2C: CDS vs NC
+echo -e "genomeQ\tgenomeR\ttotal_CDS_bases_a\tunmapped_CDS_bases_b\tfract_CDS_unmapped_X\ttotal_NC_bases_c\tunmapped_NC_bases_d\tfrac_NC_unmapped_Y\tgenomeQ_size\tunmapped_bases" > unmap_annot_CDSs.2.tsv
+grep -h '### Result_unmap' *.out | sed -E 's/### Result_unmap\t//g' | cut -d$'\t' -f1-10 >> unmap_annot_CDSs.2.tsv
+# concat results for Fig2D: COGs
+echo -e "genome_pair\tunmapped_CDS_count\tJ\tA\tK\tL\tB\tD\tY\tV\tT\tM\tN\tZ\tW\tU\tO\tX\tC\tG\tE\tF\tH\tI\tP\tQ\tR\tS\tnoCOG" > unmap_annot_COGs.2.tsv
+grep -h '### Result_COGs' *.out | sed -E 's/### Result_COGs\t//g' >> unmap_annot_COGs.2.tsv
+
+
+######### Fig2C: plot NC_base frac for each genome pair #########
+	# For a genome pair:
+	# a = total number of coding bases
+	# b = total number of coding bases shared
+	# X value = 1 - b/a = fraction coding missing
+	# Analogously:
+	# c = total number of non-coding bases
+	# d = total number of non-coding bases shared
+	# Y value = 1 - d/c = fraction non-coding missing
+
+# read result into R: unmapped region length >= 150 bp
+unmapped_CDSvsNC.2 <- read.table('unmap_annot_CDSs.2.tsv', sep="\t", quote="", header=TRUE)
+dim(unmapped_CDSvsNC.2)
+[1] 1876   10
+
+# plot
+X=unmapped_CDSvsNC.2$fract_CDS_unmapped_X*100
+Y=unmapped_CDSvsNC.2$frac_NC_unmapped_Y*100
+
+# full range
+pdf(file = "CDS_NC_frac.4.pdf", width = 4, height = 4.6)
+plot(x=X, y=Y, main='frac CDS & NC diff', xlab='Percent coding missing (%)', ylab='Percent non-coding missing (%)', pch=16,col='#00000033', cex=0.5, xlim=c(0,max(c(X,Y))), ylim=c(0,max(c(X,Y))), panel.first={abline(a = 0, b = 1, lty = 2, col = "black")})
+lines(smooth.spline(X, Y, df=2), col='#f58231',lwd=2)
+legend("bottomright", legend = c('Fitted', 'Identity'), col = c('#f58231', 'black'), lty=c(1,2), inset = 0.025, bty="n",lwd=c(2,1))
+dev.off()
+# zoom in
+pdf(file = "CDS_NC_frac.5.pdf", width = 4, height = 4.6)
+plot(x=X, y=Y, main='frac CDS & NC diff', xlab='Percent coding missing (%)', ylab='Percent non-coding missing (%)', pch=16,col='#00000033', cex=0.5, xlim=c(0,5), ylim=c(0,5), panel.first={abline(a = 0, b = 1, lty = 2, col = "black")}, xaxs="i", yaxs="i")
+lines(smooth.spline(X, Y, df=2), col='#f58231',lwd=2)
+legend("bottomright", legend = c('Fitted', 'Identity'), col = c('#f58231', 'black'), lty=c(1,2), inset = 0.025, bty="n",lwd=c(2,1))
+text(0.1,5-0.1, 'Complete genomes\n(≥99.9% ANI)', c(0,1))
+dev.off()
+
+
+######### Fig2D: plot COG enrichment #########
+# input COG counts
+whole_genome_COG <- read.table('whole_genome_COG.1.tsv', sep="\t", quote="", header=TRUE, )
+unmapped_COG.2 <- read.table('unmap_annot_COGs.2.tsv', sep="\t", quote="", header=TRUE)
+# background only use genomes present in pairs with unmapped regions
+unmapped_COG.2$genomeID <- sub('^(GCF_[0-9]+)_.*', '\\1', unmapped_COG.2$genome_pair)
+df_merge_COG.2 <- merge(unmapped_COG.2, whole_genome_COG, by='genomeID', suffixes = c(".um",".bg"))
+
+###### use bootstrap to test significance
+cog_cats # COGs included in the analysis (remove eukaryote specific categories B and Y)
+#  [1] "J"     "A"     "K"     "L"     "D"     "V"     "T"     "M"     "N"    
+# [10] "Z"     "W"     "U"     "O"     "X"     "C"     "G"     "E"     "F"    
+# [19] "H"     "I"     "P"     "Q"     "R"     "S"     "noCOG"
+
+# Odds ratio function
+compute_OR <- function(df, cat) {
+  unmapped_COG    <- sum(df[[paste0(cat, ".um")]])
+  unmapped_CDS <- sum(df$unmapped_CDS_count)
+  genome_COG      <- sum(df[[paste0(cat, ".bg")]])
+  genome_CDS   <- sum(df$total_CDS_count)
+  (unmapped_COG / unmapped_CDS) / (genome_COG / genome_CDS)
+}
+
+# Observed ORs
+observed_OR.2 <- sapply(cog_cats, \(cat) compute_OR(df_merge_COG.2, cat))
+#         J         A         K         L         D         V         T         M 
+# 0.8520551 1.5814983 0.9197570 0.8408200 0.8391259 0.8441571 0.9516687 0.8389720 
+#         N         Z         W         U         O         X         C         G 
+# 1.0801204 0.1091399 1.0622887 0.8738485 0.9629725 0.9128477 0.9448362 0.9586890 
+#         E         F         H         I         P         Q         R         S 
+# 0.9665733 0.8682921 0.9506519 0.8767667 0.9279993 0.8984214 0.9740390 0.9431157 
+#     noCOG 
+# 1.2857536 
+
+# Bootstrap
+set.seed(123)
+n_boot <- 1000
+boot_OR.2 <- replicate(n_boot, {
+  df_boot <- df_merge_COG.2[sample(nrow(df_merge_COG.2), replace = TRUE), ]
+  sapply(cog_cats, \(cat) compute_OR(df_boot, cat))
+})
+dim(boot_OR.2) # boot_OR.2 is now a cog_cats x n_boot matrix
+[1]   25 1000
+
+# Summarise, 99% CI (to get p<0.01 significance)
+unmap_COG_OR_CI.2 <- data.frame(
+  COG        = cog_cats,
+  OR         = observed_OR.2,
+  CI_low     = apply(boot_OR.2, 1, quantile, 0.005),
+  CI_high    = apply(boot_OR.2, 1, quantile, 0.995),
+  log_OR     = log2(observed_OR.2),
+  log_CI_low = apply(boot_OR.2, 1, \(b) quantile(log2(b), 0.005)),
+  log_CI_high = apply(boot_OR.2, 1, \(b) quantile(log2(b), 0.995)),
+  row.names  = NULL
+)
+unmap_COG_OR_CI.2$sig <- ifelse(!(unmap_COG_OR_CI.2$CI_low <= 1 & unmap_COG_OR_CI.2$CI_high >= 1), "*", "")
+unmap_COG_OR_CI.2
+#      COG        OR    CI_low   CI_high      log_OR log_CI_low log_CI_high sig
+# 1      J 0.8520551 0.7437580 0.9786020 -0.23098140 -0.4270948 -0.03120595   *
+# 2      A 1.5814983 0.4094665 3.2761025  0.66129200 -1.2881843  1.71197996    
+# 3      K 0.9197570 0.8607110 0.9807967 -0.12067535 -0.2163992 -0.02797400   *
+# 4      L 0.8408200 0.7503145 0.9310198 -0.25013103 -0.4144326 -0.10311647   *
+# 5      D 0.8391259 0.6777742 1.0747074 -0.25304084 -0.5611237  0.10394385    
+# 6      V 0.8441571 0.7413129 0.9530368 -0.24441651 -0.4318455 -0.06939611   *
+# 7      T 0.9516687 0.8507095 1.0546518 -0.07146864 -0.2332615  0.07676679    
+# 8      M 0.8389720 0.7433122 0.9454074 -0.25330537 -0.4279601 -0.08099201   *
+# 9      N 1.0801204 0.7111272 1.5429236  0.11119218 -0.4918206  0.62566661    
+# 10     Z 0.1091399 0.0000000 0.3458620 -3.19575005       -Inf -1.53173196   *
+# 11     W 1.0622887 0.6697938 1.4873182  0.08717595 -0.5782119  0.57270911    
+# 12     U 0.8738485 0.6755277 1.0898063 -0.19454487 -0.5659136  0.12407180    
+# 13     O 0.9629725 0.8760275 1.0609859 -0.05443345 -0.1909519  0.08540551    
+# 14     X 0.9128477 0.7126579 1.1414327 -0.13155389 -0.4887187  0.19084478    
+# 15     C 0.9448362 0.8385867 1.0632931 -0.08186383 -0.2539690  0.08853925    
+# 16     G 0.9586890 0.8537570 1.0749219 -0.06086529 -0.2281026  0.10423174    
+# 17     E 0.9665733 0.8796170 1.0527712 -0.04904894 -0.1850527  0.07419187    
+# 18     F 0.8682921 0.7177211 1.0280477 -0.20374770 -0.4785049  0.03990637    
+# 19     H 0.9506519 0.8411052 1.0850827 -0.07301085 -0.2496421  0.11780495    
+# 20     I 0.8767667 0.7565559 1.0011901 -0.18973517 -0.4024813  0.00171592    
+# 21     P 0.9279993 0.8286341 1.0433097 -0.10780445 -0.2711928  0.06116754    
+# 22     Q 0.8984214 0.7212915 1.0664575 -0.15453586 -0.4713459  0.09282640    
+# 23     R 0.9740390 0.9045607 1.0439274 -0.03794858 -0.1447107  0.06202135    
+# 24     S 0.9431157 0.8637740 1.0235167 -0.08449330 -0.2112742  0.03353466    
+# 25 noCOG 1.2857536 1.2093032 1.3709000  0.36261415  0.2741759  0.45512330   *
+
+
+### Fig 2D
+log_odds_ticks <- log2(c(1/8, 1/4, 1/2, 1, 2, 4))
+odds_labels    <- c("1/8", "1/4", "1/2", "1", "2", "4")
+recolor <- c(rep('#fcccfc',4), rep('#fcfccc',10), rep('#bcfcfc',8), rep('#e0e0e0',3))
+
+pdf(file = "COG_frac_logodds.7.pdf", width = 4.4, height = 4.2)
+
+bp <- barplot(unmap_COG_OR_CI.2$log_OR,
+              col  = recolor,
+              las  = 2,
+              yaxt = "n",
+              ylab = "Odds of COG categories in missing regions",
+              main = "COG enrichment in unmapped regions",
+              ylim = range(log_odds_ticks))
+
+axis(2, at = log_odds_ticks, labels = odds_labels, las = 1)
+
+# COG labels
+text(x      = bp,
+     y      = ifelse(unmap_COG_OR_CI.2$log_OR >= 0,
+                     unmap_COG_OR_CI.2$log_OR + 0.15,
+                     unmap_COG_OR_CI.2$log_OR - 0.15),
+     labels = unmap_COG_OR_CI.2$COG,
+     cex    = 0.8,
+     xpd    = TRUE)
+
+# Significance stars — placed just above/below the COG label
+text(x      = bp,
+     y      = ifelse(unmap_COG_OR_CI.2$log_OR >= 0,
+                     unmap_COG_OR_CI.2$log_OR + 0.35,
+                     unmap_COG_OR_CI.2$log_OR - 0.35),
+     labels = unmap_COG_OR_CI.2$sig,
+     cex    = 1.0,
+     xpd    = TRUE)
+
+text(15,-1, 'Complete genomes\n(≥99.9% ANI)', c(0,1))
+legend('topright',legend = c('Information Storage and Processing', 'Cellular Processes and Signaling','Metabolism','Poorly Characterized'), title='Clusters of Orthologous Genes Categories', pt.bg=c('#fcccfc','#fcfccc','#bcfcfc','#e0e0e0'), col='black', pch = 22, cex = 0.8, pt.cex=1.5, bty = "n")
+
+dev.off()

@@ -183,3 +183,193 @@ grep -h 'Result_fastANI' * | sed 's/.fna.gz//g' > fastANI.tsv
 
 # read fastANI result into R
 fastANI_fl3000 <- read.table('fastANI.tsv', sep="\t", quote="", header=FALSE, fill=TRUE, col.names=c("Result_Header","Genus","GenomeA","GenomeB","ANI_AB","C1","S1","ANI_BA","C2","S2","aveANI","ave_genome_shared","shared_skew","length_skew"))[,c(2:14)]
+
+# max ANI per genome
+library(dplyr)
+fastANI_fl3000_maxANI <- fastANI_fl3000 %>%
+  # Stack GenomeA and GenomeB into one column (so we can easily find max ANI per genome)
+  mutate(Genome = GenomeA) %>%
+  bind_rows(fastANI_fl3000 %>% mutate(Genome = GenomeB)) %>%
+  # Group by both Genus and Genome, then select the row with highest ANI
+  group_by(Genus, Genome) %>%
+  slice_max(order_by = aveANI, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  # Remove duplicates (if both GenomeA/2 pairs yield same row)
+  distinct()
+dim(fastANI_fl3000_maxANI) # [1] 4238   14
+
+# append SeqTech from metadata to fastANI results
+SeqTech_class.1 <- readRDS('Collecting_genomes_and_metadata/SeqTech_class.1.rds')
+fastANI_fl3000_maxANI <- fastANI_fl3000_maxANI |>
+  left_join(SeqTech_class.1, by = c("GenomeA" = "genomeID")) |>
+  rename(SeqTech_A = read_type) |>
+  left_join(SeqTech_class.1, by = c("GenomeB" = "genomeID")) |>
+  rename(SeqTech_B = read_type) |>
+  mutate(
+	SeqTech_pair = case_when(
+		SeqTech_A == "unknown_others" | SeqTech_B == "unknown_others" ~ "unknown_others",
+		TRUE ~ paste0(pmin(SeqTech_A, SeqTech_B),
+					pmax(SeqTech_A, SeqTech_B))
+	)
+  )
+saveRDS(fastANI_fl3000_maxANI, 'fastANI_fl3000_maxANI.rds')
+
+
+# list of maxANI genome pairs
+write.table(unique(fastANI_fl3000_maxANI[, c('Genus','GenomeA','GenomeB')]), file = "queue_list.2.txt", sep = "\t", quote = FALSE, row.names = FALSE, col.names = FALSE)
+
+
+###### rerun script on cluster: calc_asym_X.5.r ######
+mkdir -p calc_asym_X.2/
+vim calc_asym_X.2.slurm
+#!/bin/bash
+
+#SBATCH -J covQ.2
+#SBATCH -p dept_cpu
+#SBATCH -c 1
+#SBATCH -a 1-3039%100
+
+# setup SCRDIR
+SCRDIR=/scr/${SLURM_JOB_ID}
+mkdir /scr/${SLURM_JOB_ID}
+cd $SCRDIR
+echo "SCRDIR:" /net/$SLURMD_NODENAME/scr/${SLURM_JOB_ID}
+echo "My SLURM_ARRAY_TASK_ID: " $SLURM_ARRAY_TASK_ID
+outdir=calc_asym_X.2/
+
+genus=`awk -F'\t' 'NR == x { print $1 }' x=$SLURM_ARRAY_TASK_ID queue_list.2.txt`
+GenomeA=`awk -F'\t' 'NR == x { print $2 }' x=$SLURM_ARRAY_TASK_ID queue_list.2.txt`
+GenomeB=`awk -F'\t' 'NR == x { print $3 }' x=$SLURM_ARRAY_TASK_ID queue_list.2.txt`
+echo "Job start: " ${genus} ${GenomeA} ${GenomeB}
+
+# move files
+rsync -av source_data_04112026/genomic.fna/${GenomeA}.fna.gz source_data_04112026/genomic.fna/${GenomeB}.fna.gz calc_asym_X.5.r ${SCRDIR}/
+gunzip -k -c ${GenomeA}.fna.gz > ${GenomeA}.fna
+gunzip -k -c ${GenomeB}.fna.gz > ${GenomeB}.fna
+
+# run nucmer: q:A, r:B
+nucmer -c 100 --maxmatch -p ${GenomeA}_${GenomeB} ${GenomeB}.fna ${GenomeA}.fna; # Use all anchor matches regardless of their uniqueness
+delta-filter -q ${GenomeA}_${GenomeB}.delta > ${GenomeA}_${GenomeB}.qfilter.delta; # Maps each position of each query to its best hit in the reference, allowing for reference overlaps
+show-coords -T -q -c -l ${GenomeA}_${GenomeB}.qfilter.delta > ${GenomeA}_${GenomeB}.coords;
+if [[ -f ${GenomeA}_${GenomeB}.coords ]] ; then
+	rsync -av --progress ${GenomeA}_${GenomeB}.coords ${outdir}
+	Rscript calc_asym_X.5.r --genus=${genus} --genomeQ_ID=${GenomeA} --genomeR_ID=${GenomeB} --coords=${GenomeA}_${GenomeB}.coords --min_gap_size=150
+else
+	echo 'FAILED: nucmer ${genus} ${GenomeA} ${GenomeB}'
+fi
+# run nucmer: q:B, r:A
+nucmer -c 100 --maxmatch -p ${GenomeB}_${GenomeA} ${GenomeA}.fna ${GenomeB}.fna; # Use all anchor matches regardless of their uniqueness
+delta-filter -q ${GenomeB}_${GenomeA}.delta > ${GenomeB}_${GenomeA}.qfilter.delta; # Maps each position of each query to its best hit in the reference, allowing for reference overlaps
+show-coords -T -q -c -l ${GenomeB}_${GenomeA}.qfilter.delta > ${GenomeB}_${GenomeA}.coords;
+if [[ -f ${GenomeB}_${GenomeA}.coords ]] ; then
+	rsync -av --progress ${GenomeB}_${GenomeA}.coords ${outdir}
+	Rscript calc_asym_X.5.r --genus=${genus} --genomeQ_ID=${GenomeB} --genomeR_ID=${GenomeA} --coords=${GenomeB}_${GenomeA}.coords --min_gap_size=150
+else
+	echo 'FAILED: nucmer ${genus} ${GenomeB} ${GenomeA}'
+fi
+
+# send results
+rsync -av --progress *.pdf *.rds ${outdir}
+
+# clean files
+trap "rm -r $SCRDIR" EXIT
+
+# echo information
+echo $SLURM_SUBMIT_DIR
+echo $SLURMD_NODENAME
+echo $SLURM_JOB_ID
+echo $SLURM_ARRAY_TASK_ID
+########### END OF SCRIPT ###########
+# run slurm
+mkdir runSlurm_calc_asym_X.2/
+cd runSlurm_calc_asym_X.2/
+sbatch calc_asym_X.2.slurm
+
+# concat result
+cd runSlurm_calc_asym_X.2/; grep -h '# Results:' * | sed -E 's/# Results:\t//g' > calc_asym_X.2.tsv
+
+# read result in R
+df_calc_asym_X.2 <- read.table('calc_asym_X.2.tsv', sep="\t", quote="", header=FALSE, fill=TRUE, col.names=c('Genus', 'GenomeA', 'GenomeB', 'covQ', 'lenQ','Frac_missing', 'X_Kuiper', 'Pval', 'logPval', 'num_indels'))
+df_calc_asym_X.2[df_calc_asym_X.2=='NaN'] <- NA
+
+# merge with fastANI_fl3000_maxANI
+# split df_calc_asym into A->B and B->A directions
+asym_AB <- df_calc_asym_X.2  # GenomeA is query, GenomeB is ref
+colnames(asym_AB)[colnames(asym_AB) %in% c("covQ","lenQ","Frac_missing","X_Kuiper","Pval","logPval","num_indels")] <- paste0(c("covQ","lenQ","Frac_missing","X_Kuiper","Pval","logPval","num_indels"), "_AB")
+asym_BA <- df_calc_asym_X.2  # will match as B->A
+names(asym_BA)[names(asym_BA) == "GenomeA"] <- "tmp"
+names(asym_BA)[names(asym_BA) == "GenomeB"] <- "GenomeA"
+names(asym_BA)[names(asym_BA) == "tmp"]     <- "GenomeB"
+colnames(asym_BA)[colnames(asym_BA) %in% c("covQ","lenQ","Frac_missing","X_Kuiper","Pval","logPval","num_indels")] <- paste0(c("covQ","lenQ","Frac_missing","X_Kuiper","Pval","logPval","num_indels"), "_BA")
+# merge AB direction
+fastANI_fl3000_maxANI <- merge(fastANI_fl3000_maxANI, asym_AB, by = c("Genus", "GenomeA", "GenomeB"))
+fastANI_fl3000_maxANI <- merge(fastANI_fl3000_maxANI, asym_BA, by = c("Genus","GenomeA","GenomeB"))
+dim(fastANI_fl3000_maxANI) # [1] 4238   31
+fastANI_fl3000_maxANI$nucmer_ave_genome_shared <- (fastANI_fl3000_maxANI$covQ_AB + fastANI_fl3000_maxANI$covQ_BA) * 100 / (fastANI_fl3000_maxANI$lenQ_AB + fastANI_fl3000_maxANI$lenQ_BA)
+fastANI_fl3000_maxANI$nucmer_shared_skew <- abs(fastANI_fl3000_maxANI$covQ_AB/fastANI_fl3000_maxANI$lenQ_AB - fastANI_fl3000_maxANI$covQ_BA/fastANI_fl3000_maxANI$lenQ_BA) * 100
+fastANI_fl3000_maxANI$sum_num_indels <- fastANI_fl3000_maxANI$num_indels_AB + fastANI_fl3000_maxANI$num_indels_BA
+dim(fastANI_fl3000_maxANI) # [1] 4238   34
+length(unique(fastANI_fl3000_maxANI$Genus))
+[1] 86
+saveRDS(fastANI_fl3000_maxANI, 'fastANI_fl3000_maxANI.rds')
+
+fastANI_fl3000_maxANI_f999 <- fastANI_fl3000_maxANI[fastANI_fl3000_maxANI$aveANI>=99.9,]
+dim(fastANI_fl3000_maxANI_f999) # [1] 1416   34
+saveRDS(fastANI_fl3000_maxANI_f999, 'fastANI_fl3000_maxANI_f999.rds')
+
+# same approach applied to draft genomes
+dim(fastANI_draftonly_fl3000_maxANI) # [1] 23939    11
+length(unique(fastANI_draftonly_fl3000_maxANI$Genus))
+[1] 241
+saveRDS(fastANI_draftonly_fl3000_maxANI, 'fastANI_draftonly_fl3000_maxANI.rds')
+
+
+
+######## Fig2A - ANI vs. AF (complete genomes) ########
+X=fastANI_fl3000_maxANI$aveANI
+Y=fastANI_fl3000_maxANI$nucmer_ave_genome_shared
+# get intercept value at x = 100
+model <- smooth.spline(X, Y, df = 2) # model for prediction
+intercept <- predict(model, x = 100)$y # [1] 99.4427
+
+pdf(file = "ANI_AF_fastANI3000_nucmer.1.pdf", width = 4, height = 4.6)
+plot(X, Y, xlab='Average nucleotide identity (%)', ylab='Genome regions shared (%)', pch=16,col='#00000011', cex=0.5, main=paste0('Fig2A. ANI vs. AF (fastANI fragLen3000)\nx=100 intercept: ', round(intercept,4)))
+lines(smooth.spline(X, Y, df=2), col='#f58231',lwd=2)
+legend("bottomright", legend = 'smooth.spline(df=2)', col = '#f58231', inset = 0.025, bty="n",lwd=2)
+text(min(X),max(Y), 'Complete genomes', c(0,1))
+dev.off()
+
+pdf(file = "ANI_AF_fastANI3000_nucmer.3.pdf", width = 4, height = 4.6)
+plot(X, Y, xlab='Average nucleotide identity (%)', ylab='Genome content shared (%)', pch=16,col='#00000011', cex=0.5, main=paste0('Fig2A. ANI vs. AF (fastANI fragLen3000)\nx=100 intercept: ', round(intercept,4)), xlim=c(95,100), ylim=c(55,100), xaxs="i", yaxs="i")
+lines(smooth.spline(X, Y, df=2), col='#f58231',lwd=2)
+legend("bottomleft", legend = 'Fitted', col = '#f58231', inset = 0.025, bty="n",lwd=2)
+text(95.1,max(Y)-1, 'Complete genomes', c(0,1))
+dev.off()
+
+pdf(file = "ANI_AF_fastANI3000_nucmer.5.pdf", width = 2.4, height = 3)
+plot(X, Y, xlab='Average nucleotide identity (%)', ylab='Genome content shared (%)', pch=16,col='#00000011', cex=0.5, main=paste0('Fig2A. ANI vs. AF (fastANI fragLen3000)\nx=100 intercept: ', round(intercept,4)), xlim=c(99.9,100), ylim=c(92,100), xaxs="i", yaxs="i")
+lines(smooth.spline(X, Y, df=2), col='#f58231',lwd=2)
+dev.off()
+
+
+
+######## Fig2B - ANI vs. AF (draft genomes)  ########
+X=fastANI_draftonly_fl3000_maxANI$aveANI
+Y=fastANI_draftonly_fl3000_maxANI$nucmer_ave_genome_shared
+# get intercept value at x = 100
+model <- smooth.spline(X, Y, df = 2) # model for prediction
+intercept <- predict(model, x = 100)$y # [1] 97.11688
+
+pdf(file = "ANI_AF_draftonly_fastANI3000_nucmer.1.pdf", width = 4, height = 4.6)
+plot(X, Y, xlab='Average nucleotide identity (%)', ylab='Genome content shared (%)', pch=16,col='#00000011', cex=0.5, main=paste0('Fig2B. ANI vs. AF (fastANI fragLen3000)\nx=100 intercept: ', round(intercept,4)))
+lines(smooth.spline(X, Y, df=2), col='#f58231',lwd=2)
+legend("bottomright", legend = 'smooth.spline(df=2)', col = '#f58231', inset = 0.025, bty="n",lwd=2)
+text(min(X),max(Y), 'Draft genomes', c(0,1))
+dev.off()
+
+pdf(file = "ANI_AF_draftonly_fastANI3000_nucmer.3.pdf", width = 4, height = 4.6)
+plot(X, Y, xlab='Average nucleotide identity (%)', ylab='Genome content shared (%)', pch=16,col='#00000011', cex=0.5, main=paste0('Fig2B. ANI vs. AF (fastANI fragLen3000)\nx=100 intercept: ', round(intercept,4)), xlim=c(95,100), ylim=c(55,100), xaxs="i", yaxs="i")
+lines(smooth.spline(X, Y, df=2), col='#f58231',lwd=2)
+legend("bottomright", legend = 'Fitted', col = '#f58231', inset = 0.025, bty="n",lwd=2)
+text(95.1,max(Y)-1, 'Draft genomes', c(0,1))
+dev.off()

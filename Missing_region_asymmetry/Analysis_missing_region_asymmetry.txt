@@ -1,0 +1,15 @@
+Analysis_missing_region_asymmetry.txt
+
+Shu-Ting Cho <shutingcho@pitt.edu>
+
+# Genome content asymmetry between closely related complete genomes (ANI ≥ 99.9%)
+# Figure 3ABCD
+
+
+# list of genomeIDs shown in Fig2A with ANI>99.9 pairs
+fastANI_fl3000_maxANI_f999 <- readRDS('ANI_vs_content_shared/fastANI_fl3000_maxANI_f999.rds')
+writeLines(unique(c(fastANI_fl3000_maxANI_f999$GenomeA, fastANI_fl3000_maxANI_f999$GenomeB)), 'queue_list.1.txt')
+
+# assembly summary
+refseq_bacteria_assembly_summary_04112026 <- readRDS('Collecting_genomes_and_metadata/refseq_bacteria_assembly_summary_04112026.rds')
+saveRDS(refseq_bacteria_assembly_summary_04112026[unique(c(fastANI_fl3000_maxANI_f999$GenomeA, fastANI_fl3000_maxANI_f999$GenomeB)),], 'assembly_summary.rds')
