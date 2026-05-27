@@ -1,0 +1,181 @@
+Analysis_Repeat_collapse_TR_length.txt
+
+Shu-Ting Cho <shutingcho@pitt.edu>
+
+# Investigating repeat collapse by comparing exact tandem repeat total lengths distributions
+# Figure 4D
+# CDFs of the "total length" (not unit length) distribution of identical repeats by sequencing technologies
+
+# Reference code:
+# https://support.bioconductor.org/p/68996/#69062
+
+
+### Balanced genome dataset for species_taxid and read_type
+# list of complete genome, single contig, and no ambiguouty
+refseq_bacteria_assembly_summary_04112026_complete <- readRDS('Collecting_genomes_and_metadata/refseq_bacteria_assembly_summary_04112026_complete.rds')
+
+# check genome counts
+library(dplyr)
+species_counts <- refseq_bacteria_assembly_summary_04112026_complete %>%
+    group_by(species_taxid, read_type) %>%
+    summarise(n = n(), .groups = "drop") %>%
+    tidyr::pivot_wider(names_from = read_type, values_from = n, values_fill = 0) %>%
+    filter(s >= 1, h >= 1, l >= 1)
+
+# get min_n per species
+species_min_n <- species_counts %>%
+    mutate(min_n = pmin(s, h, l)) %>%
+    select(species_taxid, min_n)
+
+# sample equal numbers per species per technology
+assembly_summary_balanced <- refseq_bacteria_assembly_summary_04112026_complete %>%
+    filter(read_type %in% c("s", "h", "l")) %>%
+    filter(species_taxid %in% species_counts$species_taxid) %>%
+    left_join(species_min_n, by = "species_taxid") %>%
+    group_by(species_taxid, read_type) %>%
+    group_modify(~ slice_sample(.x, n = unique(.x$min_n))) %>%
+    ungroup()
+
+# verify balance
+table(assembly_summary_balanced$read_type)
+   h    l    s 
+1631 1631 1631 
+nrow(assembly_summary_balanced)
+[1] 4893
+assembly_summary_balanced <- as.data.frame(assembly_summary_balanced)
+rownames(assembly_summary_balanced) <- assembly_summary_balanced$genomeID
+saveRDS(assembly_summary_balanced, 'assembly_summary_balanced.rds')
+
+writeLines(assembly_summary_balanced$genomeID, 'queue_list.2.txt')
+
+
+###### run script on cluster: TR_total_len.1.r ######
+mkdir -p TR_total_len.2/
+vim TR_total_len.2.slurm
+#!/bin/bash
+
+#SBATCH -J TR_len
+#SBATCH -p dept_cpu
+#SBATCH -c 1
+#SBATCH -a 0-4892%100
+
+# setup SCRDIR
+SCRDIR=/scr/${SLURM_JOB_ID}
+mkdir /scr/${SLURM_JOB_ID}
+cd $SCRDIR
+echo "SCRDIR:" /net/$SLURMD_NODENAME/scr/${SLURM_JOB_ID}
+echo "My SLURM_ARRAY_TASK_ID: " $SLURM_ARRAY_TASK_ID
+outdir=TR_total_len.2/
+
+List=`cat queue_list.2.txt`
+arr=($List)
+genomeID=${arr[$SLURM_ARRAY_TASK_ID]}
+echo "genomeID: " $genomeID
+
+# move files
+rsync -avz --progress TR_total_len.1.r ${SCRDIR}/
+if [[ -f source_data_04112026/genomic.fna/${genomeID}.fna.gz ]]; then
+	rsync -avz --progress source_data_04112026/genomic.fna/${genomeID}.fna.gz ${SCRDIR}/
+else
+	rsync -avz --progress fetch_source_data.3.r assembly_summary_balanced.rds ${SCRDIR}/
+	Rscript fetch_source_data.3.r assembly_summary_balanced.rds ${genomeID} ftp_path fna
+fi
+
+# run script # period is motif length
+Rscript TR_total_len.1.r --genome=${genomeID}.fna.gz --min_period=2 --max_period=1000
+
+# send results
+rsync -avz --progress GCF_*.rds ${outdir}
+
+# clean files
+trap "rm -r $SCRDIR" EXIT
+
+# echo information
+echo $SLURM_SUBMIT_DIR
+echo $SLURMD_NODENAME
+echo $SLURM_JOB_ID
+echo $SLURM_ARRAY_TASK_ID
+########### END OF SCRIPT ###########
+# run slurm
+mkdir runSlurm_TR_total_len.2/
+cd runSlurm_TR_total_len.2/
+sbatch TR_total_len.2.slurm
+
+
+
+# read into R
+col_map_SeqTech <- c(
+  s = "#4363d8",   # blue
+  h = "#f58231",   # orange
+  l = "#3cb44b"   # green
+)
+
+# loop through s, h, l genomes and read in RDS
+l_TR_lens <- list()
+for (seqTech_h in names(col_map_SeqTech)) {
+	genomeIDs_h <- assembly_summary_balanced[assembly_summary_balanced$read_type==seqTech_h,'genomeID']
+	l_TR_lens[[seqTech_h]] <- c()
+	for (genomeID_h in genomeIDs_h) {
+		file_h <- paste0('TR_total_len.2/',genomeID_h, '.rds')
+		if (file.exists(file_h)) {
+			l_TR_lens[[seqTech_h]] <- c(l_TR_lens[[seqTech_h]], readRDS(file_h))
+		}
+	}
+}
+
+##### Fig. 4D: CDFs of TR lengths by seqTech #####
+
+# full range
+pdf(file = "CDF_TR_lens.3.pdf", width = 4, height = 4.6)
+plot(NA, xlim = c(0, max(unlist(l_TR_lens))), ylim = c(0, 1), xlab = "Exact tandem repeat lengths (nucleotides)", ylab = "Cumulative probability", main = "Fig4D\nCDF of TR len by sequencing technology")
+for (seqTech_h in names(l_TR_lens)) {
+	plot(ecdf(l_TR_lens[[seqTech_h]]), verticals=TRUE, pch=NA, col=col_map_SeqTech[seqTech_h], lwd=2, col.01line = NA, add=TRUE)
+}
+legend("bottomright", legend = paste0(names(col_map_SeqTech), " (n = ", table(assembly_summary_balanced$read_type)[names(col_map_SeqTech)], ")"), col = col_map_SeqTech, lwd  = 2, cex  = 0.8, bty  = "n", title = "Sequencing technology")
+dev.off()
+
+# zoom in
+pdf(file = "CDF_TR_lens.4.pdf", width = 4, height = 4.6)
+plot(NA, xlim = c(100, 1000), ylim = c(0.9, 1), xlab = "Exact tandem repeat lengths (nucleotides)", ylab = "Cumulative probability", main = "Fig4D\nCDF of TR len by sequencing technology")
+for (seqTech_h in names(l_TR_lens)) {
+	plot(ecdf(l_TR_lens[[seqTech_h]]), verticals=TRUE, pch=NA, col=col_map_SeqTech[seqTech_h], lwd=2, col.01line = NA, add=TRUE)
+}
+legend("bottomright", legend = paste0(names(col_map_SeqTech), " (n = ", table(assembly_summary_balanced$read_type)[names(col_map_SeqTech)], ")"), col = col_map_SeqTech, lwd  = 2, cex  = 0.8, bty  = "n", title = "Sequencing technology")
+dev.off()
+
+
+## K-S test, directional
+pairs_mat <- combn(names(col_map_SeqTech), 2)
+
+ks_results_2D <- apply(pairs_mat, 2, function(pair) {
+    x <- l_TR_lens[[pair[1]]]
+    y <- l_TR_lens[[pair[2]]]
+    
+    ks_two   <- ks.test(x, y, alternative = "two.sided")
+    ks_less  <- ks.test(x, y, alternative = "less")
+    ks_great <- ks.test(x, y, alternative = "greater")
+    
+    data.frame(group1  = pair[1], group2 = pair[2],
+               D       = ks_two$statistic,
+               p_two   = ks_two$p.value,
+               p_less  = ks_less$p.value,
+               p_great = ks_great$p.value
+               )
+})
+
+ks_results_2D_df <- do.call(rbind, ks_results_2D)
+ks_results_2D_df$p_two_adj   <- p.adjust(ks_results_2D_df$p_two,   method = "BH")
+ks_results_2D_df$p_less_adj  <- p.adjust(ks_results_2D_df$p_less,  method = "BH")
+ks_results_2D_df$p_great_adj <- p.adjust(ks_results_2D_df$p_great, method = "BH")
+# direction based on p adj
+ks_results_2D_df$direction <- ifelse(
+    ks_results_2D_df$p_less_adj  > ks_results_2D_df$p_great_adj,
+    paste0(ks_results_2D_df$group1, "<", ks_results_2D_df$group2),
+    paste0(ks_results_2D_df$group1, ">", ks_results_2D_df$group2)
+)
+
+ks_results_2D_df
+#    group1 group2           D        p_two      p_less      p_great    p_two_adj  p_less_adj  p_great_adj direction
+# D       s      h 0.008501427 2.967250e-03 0.002278238 1.483625e-03 0.0044508748 0.005933403 2.225437e-03       s<h
+# D1      s      l 0.010867876 4.800303e-05 0.003955602 2.400151e-05 0.0001440091 0.005933403 7.200454e-05       s<l
+# D2      h      l 0.006913180 2.535123e-02 0.956241493 1.267564e-02 0.0253512265 0.956241493 1.267564e-02       h<l
