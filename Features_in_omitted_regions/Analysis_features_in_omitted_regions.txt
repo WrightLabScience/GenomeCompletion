@@ -1,0 +1,250 @@
+Analysis_features_in_omitted_regions.txt
+
+Shu-Ting Cho <shutingcho@pitt.edu>
+
+# Investigating gene features in putative missing regions with omitted reads
+# Figure 5B
+
+
+# read in results from Fig5A
+df_fastANI_maxANI_f999_mapQR <- readRDS('Missing_region_omitted_reads/df_fastANI_maxANI_f999_mapQR.rds')
+dim(df_fastANI_maxANI_f999_mapQR)
+[1] 268  19
+
+df_Ronly <- df_fastANI_maxANI_f999_mapQR[df_fastANI_maxANI_f999_mapQR$Ronly>0,]
+dim(df_Ronly)
+[1] 228  19
+table(df_Ronly$read_type)
+  h   s 
+107 121
+
+write.table(x = df_Ronly[,c('genomeQ','genomeR')], file = 'queue_list.3.txt', quote = FALSE, row.names = FALSE, append = FALSE, sep = "\t", col.names = FALSE)
+
+############################################ Run script:find_Ronly.2.r on cluster ############################################
+mkdir find_Ronly.2/
+vim find_Ronly.2.slurm
+#!/bin/bash
+
+#SBATCH -J Ronly.2
+#SBATCH -p dept_cpu
+#SBATCH -c 1
+#SBATCH -a 1-228
+
+# setup SCRDIR
+SCRDIR=/scr/${SLURM_JOB_ID}
+mkdir /scr/${SLURM_JOB_ID}
+cd $SCRDIR
+echo "SCRDIR:" /net/$SLURMD_NODENAME/scr/${SLURM_JOB_ID}
+
+# get var
+genomeIDq=`awk -F'\t' 'NR == x { print $1 }' x=$SLURM_ARRAY_TASK_ID queue_list.3.txt`
+genomeIDr=`awk -F'\t' 'NR == x { print $2 }' x=$SLURM_ARRAY_TASK_ID queue_list.3.txt`
+echo "Job running ... ${genomeIDq}, ${genomeIDr}, find_Ronly.2"
+
+# compute Ronly
+outdir=find_Ronly.2/
+if [[ -f find_Ronly.2/${genomeIDq}_${genomeIDr}_gff_Ronly.rds ]]; then
+	echo -e "Result data exist: $SLURM_ARRAY_TASK_ID\t${genomeIDq}_${genomeIDr}\tfind_Ronly.2.r"
+elif [[ -f map_reads_QR.4/${genomeIDq}_${genomeIDr}_aligned_r.rds ]]; then
+	echo "${genomeIDq}_${genomeIDr}_aligned_r.rds exist"
+	if [[ -f source_data_04112026/genomic.gff/${genomeIDr}.gff.gz ]]; then
+		rsync -avz --progress source_data_04112026/genomic.gff/${genomeIDr}.gff.gz ${SCRDIR}/
+	else
+		rsync -avz --progress fetch_source_data.3.r assembly_summary_complete_1ctg_hs.rds ${SCRDIR}/
+		Rscript fetch_source_data.3.r assembly_summary_complete_1ctg_hs.rds ${genomeIDr} ftp_path gff
+	fi
+	rsync -av map_reads_QR.4/${genomeIDq}_${genomeIDr}_aligned_r.rds map_reads_QR.4/${genomeIDq}_${genomeIDr}_aligned_q.rds find_Ronly.2.r ${SCRDIR}/
+	# Run R script
+	cd $SCRDIR
+	time Rscript find_Ronly.2.r --genomeQ=${genomeIDq} --genomeR=${genomeIDr}
+	rsync -av *_Ronly.RData ${outdir}
+else
+	echo -e "${genomeIDq}_${genomeIDr}_aligned_r.rds NOT exist...\t$SLURM_ARRAY_TASK_ID\t${genomeIDq}\t${genomeIDr}"
+fi
+
+# count_feature_bases
+if [[ -f find_Ronly.2/${genomeIDq}_${genomeIDr}_Ronly.RData ]]; then
+	echo "${genomeIDq}_${genomeIDr}_Ronly.RData exist"
+	rsync -av find_Ronly.2/${genomeIDq}_${genomeIDr}_Ronly.RData count_feature_bases.3.r ${SCRDIR}/
+	# Run R script
+	cd $SCRDIR
+	# For Ronly
+	time Rscript count_feature_bases.3.r --prefix=${genomeIDq}_${genomeIDr} --Ronly=${genomeIDq}_${genomeIDr}_Ronly.RData
+	# For genomeR background
+	if [[ -f ${genomeIDr}.gff.gz ]]; then
+		echo "${genomeIDr}.gff.gz exist"
+	elif [[ -f source_data_04112026/genomic.gff/${genomeIDr}.gff.gz ]]; then
+		rsync -avz --progress source_data_04112026/genomic.gff/${genomeIDr}.gff.gz ${SCRDIR}/
+	else
+		rsync -avz --progress fetch_source_data.3.r assembly_summary_complete_1ctg_hs.rds ${SCRDIR}/
+		Rscript fetch_source_data.3.r assembly_summary_complete_1ctg_hs.rds ${genomeIDr} ftp_path gff
+	fi
+	time Rscript count_feature_bases.3.r --prefix=${genomeIDr}
+else
+	echo -e "${genomeIDq}_${genomeIDr}_Ronly.RData NOT exist...\t$SLURM_ARRAY_TASK_ID\t${genomeIDq}\t${genomeIDr}"
+fi
+
+# save source data
+if [[ -f source_data_04112026/genomic.gff/${genomeIDr}.gff.gz ]]; then
+	echo "Source data exist: ${genomeIDr}.gff.gz"
+else
+	rsync -avz --progress ${genomeIDr}.gff.gz source_data_04112026/genomic.gff/
+fi
+if [[ -f source_data_04112026/genomic.faa/${genomeIDr}.faa.gz ]]; then
+	echo "Source data exist: ${genomeIDr}.faa.gz"
+else
+	rsync -avz --progress ${genomeIDr}.faa.gz source_data_04112026/genomic.faa/
+fi
+
+# clean files
+trap "rm -r $SCRDIR" EXIT
+
+# echo information
+echo $SLURM_SUBMIT_DIR
+echo $SLURMD_NODENAME
+echo $SLURM_JOB_ID
+echo "${genomeIDq}, ${genomeIDr}, Ronly.2"
+########### END OF SCRIPT ###########
+# run slurm
+mkdir runSlurm_find_Ronly.2/
+cd runSlurm_find_Ronly.2/
+sbatch find_Ronly.2.slurm
+
+# concat results
+cd runSlurm_find_Ronly.2/; echo -e "genomeQ\tgenomeR\tRonly_bases\tRonly_CDS_bases\tRonly_ncRNA_bases\tRonly_intergenic_bases\tRonly_pseudoFS_bases\tRonly_pseudoIS_bases\tRonly_pseudoTrunc_bases" > Ronly_feature_bases.4.tsv
+grep -h '### Result_Ronly' *.out | sed -E 's/### Result_Ronly\t//g' | sed -E 's/_GCF_/\tGCF_/g' | sort -u >> Ronly_feature_bases.4.tsv
+
+cd runSlurm_find_Ronly.2/; echo -e "genomeR\tgenomeR_bases\tgenomeR_CDS_bases\tgenomeR_ncRNA_bases\tgenomeR_intergenic_bases\tgenomeR_pseudoFS_bases\tgenomeR_pseudoIS_bases\tgenomeR_pseudoTrunc_bases" > genomeR_feature_bases.4.tsv
+grep -h '### Result_genomeR	' *.out | sed -E 's/### Result_genomeR\t//g' | sort -u >> genomeR_feature_bases.4.tsv
+
+
+# read result into R:
+Ronly_feature_bases.4 <- read.table('Ronly_feature_bases.4.tsv', sep="\t", quote="", header=TRUE)
+genomeR_feature_bases.4 <- read.table('genomeR_feature_bases.4.tsv', sep="\t", quote="", header=TRUE)
+
+# merge Ronly with background
+feature_bases_merge.4 <- merge(Ronly_feature_bases.4, genomeR_feature_bases.4, by='genomeR', all.x=TRUE)
+dim(feature_bases_merge.4)
+[1] 228  16
+saveRDS(feature_bases_merge.4, 'feature_bases_merge.4.rds')
+
+
+# color map
+col_map_feature <- c(
+	CDS = "#d9822b",
+	pseudoFS = "#cc29b1",
+	pseudoIS = '#b32424',
+	pseudoTrunc = '#9bb324',
+	ncRNA = "#2483b3",
+	intergenic = "#808080"
+)
+
+###### use bootstrap to test significance
+# Odds ratio function
+compute_OR <- function(df, cat) {
+	Ronly_feature <- sum(df[[paste0("Ronly_", cat, "_bases")]])
+	Ronly_bases_sum <- sum(df$Ronly_bases)
+	genome_feature <- sum(df[[paste0("genomeR_", cat, "_bases")]])
+	genome_bases_sum <- sum(df$genomeR_bases)
+	(Ronly_feature / Ronly_bases_sum) / (genome_feature / genome_bases_sum)
+}
+
+# Observed ORs
+observed_OR <- sapply(names(col_map_feature), \(cat) compute_OR(feature_bases_merge.4, cat))
+#         CDS    pseudoFS    pseudoIS pseudoTrunc       ncRNA  intergenic 
+#   0.8376922   1.5667916   0.7132099   4.1639114   4.4102339   1.8900511 
+
+# Bootstrap
+set.seed(10)
+n_boot <- 1000
+boot_OR <- replicate(n_boot, {
+	df_boot <- feature_bases_merge.4[sample(nrow(feature_bases_merge.4), replace = TRUE), ]
+	sapply(names(col_map_feature), \(cat) compute_OR(df_boot, cat))
+})
+dim(boot_OR) # boot_OR is now a names(col_map_feature) x n_boot matrix
+[1]    6 1000
+
+# Summarise, 99% CI (significance: p<0.01)
+Ronly_feature_OR <- data.frame(
+	feature	 = names(col_map_feature),
+	OR         = observed_OR,
+	CI_low     = apply(boot_OR, 1, quantile, 0.005),
+	CI_high    = apply(boot_OR, 1, quantile, 0.995),
+	log2_OR     = log2(observed_OR),
+	log2_CI_low = apply(boot_OR, 1, \(b) quantile(log2(b), 0.005)),
+	log2_CI_high = apply(boot_OR, 1, \(b) quantile(log2(b), 0.995)),
+	row.names  = NULL
+)
+Ronly_feature_OR$sig <- ifelse(!(Ronly_feature_OR$CI_low <= 1 & Ronly_feature_OR$CI_high >= 1), "*", "")
+#       feature        OR    CI_low   CI_high    log2_OR  log2_CI_low log2_CI_high sig
+# 1         CDS 0.8376922 0.7622751 0.8884839 -0.2555079 -0.391616411   -0.1705826   *
+# 2    pseudoFS 1.5667916 1.0028527 2.6422973  0.6478133  0.004097034    1.4017928   *
+# 3    pseudoIS 0.7132099 0.2492633 1.1527857 -0.4876014 -2.004373875    0.2051244    
+# 4 pseudoTrunc 4.1639114 1.8966373 6.9182913  2.0579394  0.923426964    2.7904140   *
+# 5       ncRNA 4.4102339 2.0497294 8.4890750  2.1408552  1.035425094    3.0856073   *
+# 6  intergenic 1.8900511 1.6203953 2.3087484  0.9184252  0.696345816    1.2071109   *
+
+
+# plot
+log2_odds_ticks <- log2(c(1/2, 1, 2, 4, 8))
+odds_labels    <- c("1/2", "1", "2", "4", "8")
+
+pdf(file = "feature_frac_logodds.7.pdf", width = 4.4, height = 4.2)
+bp <- barplot(Ronly_feature_OR$log2_OR,
+							col  = col_map_feature,
+							las  = 2,
+							yaxt = "n",
+							ylab = "Odds of class assigned to omitted region",
+							main = "Fig5B. Feature enrichment in Ronly mapped regions",
+							ylim = range(log2_odds_ticks))
+axis(2, at = log2_odds_ticks, labels = odds_labels, las = 1)
+# feature labels
+text(x      = bp,
+		 y      = ifelse(Ronly_feature_OR$log2_OR >= 0,
+										 Ronly_feature_OR$log2_OR + 0.15,
+										 Ronly_feature_OR$log2_OR - 0.15),
+		 labels = Ronly_feature_OR$feature,
+		 cex    = 0.8,
+		 xpd    = TRUE)
+
+arrows(x0     = bp,
+       y0     = Ronly_feature_OR$log2_CI_low,
+       x1     = bp,
+       y1     = Ronly_feature_OR$log2_CI_high,
+       length = 0.01,
+       angle  = 90,
+       code   = 3,
+       col    = "black",
+       lwd    = 1)
+dev.off()
+
+
+pdf(file = "feature_frac_logodds.8.pdf", width = 4.4, height = 4.2)
+bp <- barplot(Ronly_feature_OR$log2_OR,
+							col  = col_map_feature,
+							las  = 2,
+							yaxt = "n",
+							ylab = "Odds of class assigned to omitted region",
+							main = "Fig5B. Feature enrichment in Ronly mapped regions",
+							ylim = range(log2_odds_ticks))
+axis(2, at = log2_odds_ticks, labels = odds_labels, las = 1)
+
+# feature labels
+text(x      = bp,
+		 y      = ifelse(Ronly_feature_OR$log2_OR >= 0,
+										 Ronly_feature_OR$log2_OR + 0.15,
+										 Ronly_feature_OR$log2_OR - 0.15),
+		 labels = Ronly_feature_OR$feature,
+		 cex    = 0.8,
+		 xpd    = TRUE)
+
+# Significance stars — placed just above/below the feature label
+text(x      = bp,
+		 y      = ifelse(Ronly_feature_OR$log2_OR >= 0,
+										 Ronly_feature_OR$log2_OR + 0.3,
+										 Ronly_feature_OR$log2_OR - 0.3),
+		 labels = Ronly_feature_OR$sig,
+		 cex    = 1.0,
+		 xpd    = TRUE)
+
+dev.off()
