@@ -35,7 +35,12 @@ Figure 4D
 
 Missing_region_omitted_reads
 ---
-Figure 5AB
+Figure 5A
+
+
+Features_in_omitted_regions
+---
+Figure 5B
 
 
 Missing_region_kmer_counts
