@@ -13,3 +13,232 @@ writeLines(unique(c(fastANI_fl3000_maxANI_f999$GenomeA, fastANI_fl3000_maxANI_f9
 # assembly summary
 refseq_bacteria_assembly_summary_04112026 <- readRDS('Collecting_genomes_and_metadata/refseq_bacteria_assembly_summary_04112026.rds')
 saveRDS(refseq_bacteria_assembly_summary_04112026[unique(c(fastANI_fl3000_maxANI_f999$GenomeA, fastANI_fl3000_maxANI_f999$GenomeB)),], 'assembly_summary.rds')
+
+
+######## Fig3A - skew ########
+# color code: SeqTech_pair
+col_map_SeqTech_pair <- c(
+  ss = "#4363d8",   # blue
+  hs = "#f58231",   # orange
+  ls = "#3cb44b",   # green
+  ll = "#e6194B",   # red
+  hl = "#911eb4",   # purple
+  hh = "#9A6324",    # brown
+  unknown_others = "#00000011"
+)
+
+# sort skew: larger vs. smaller genome
+fastANI_fl3000_maxANI_f999$frac_shared_larger  <- ifelse(
+    fastANI_fl3000_maxANI_f999$lenQ_AB >= fastANI_fl3000_maxANI_f999$lenQ_BA,
+    fastANI_fl3000_maxANI_f999$covQ_AB / fastANI_fl3000_maxANI_f999$lenQ_AB,
+    fastANI_fl3000_maxANI_f999$covQ_BA / fastANI_fl3000_maxANI_f999$lenQ_BA
+)
+fastANI_fl3000_maxANI_f999$frac_shared_smaller <- ifelse(
+    fastANI_fl3000_maxANI_f999$lenQ_AB >= fastANI_fl3000_maxANI_f999$lenQ_BA,
+    fastANI_fl3000_maxANI_f999$covQ_BA / fastANI_fl3000_maxANI_f999$lenQ_BA,
+    fastANI_fl3000_maxANI_f999$covQ_AB / fastANI_fl3000_maxANI_f999$lenQ_AB
+)
+X=fastANI_fl3000_maxANI_f999$frac_shared_larger*100
+Y=fastANI_fl3000_maxANI_f999$frac_shared_smaller*100
+cols <- col_map_SeqTech_pair[fastANI_fl3000_maxANI_f999$SeqTech_pair] # Assign colors to each point
+
+# color by SeqTech_pair
+pdf(file = "skew_bySeqTech_nucmer.2.pdf", width = 4, height = 4.6)
+plot(x = X, y = Y, pch = 16, cex = 0.5, col = cols, xlim = c(min(c(X,Y)), 100), ylim = c(min(c(X,Y)), 100), xlab = "Percent of longer genome\ncontained in shorter (%)", ylab = "Percent of shorter genome\ncontained in longer (%)",main = "Fig3A\nskew\n(fragLen=3000; ANI>=99.9%; nucmer)", panel.first={abline(a = 0, b = 1, lty = 2, col = "black")})
+legend("bottomright",legend = names(col_map_SeqTech_pair),col = col_map_SeqTech_pair,pch = 16, cex = 0.8, bty = "n")
+dev.off()
+# transparent points
+pdf(file = "skew_noColor_nucmer.3.pdf", width = 4, height = 4.6)
+plot(x = X, y = Y, pch = 16, cex = 0.5, col = "#00000033", xlim = c(min(c(X,Y)), 100), ylim = c(min(c(X,Y)), 100),xlab = "Percent of longer genome\ncontained in shorter (%)", ylab = "Percent of shorter genome\ncontained in longer (%)",main = "Fig3A\nskew\n(fragLen=3000; ANI>=99.9%; nucmer)", panel.first={abline(a = 0, b = 1, lty = 2, col = "black")})
+dev.off()
+# zoom in
+pdf(file = "skew_noColor_nucmer.4.pdf", width = 4, height = 4.6)
+plot(x = X, y = Y, pch = 16, cex = 0.5, col = "#00000033", xlim = c(95, 100), ylim = c(95, 100),xlab = "Percent of longer genome\ncontained in shorter (%)", ylab = "Percent of shorter genome\ncontained in longer (%)",main = "Fig3A\nskew\n(fragLen=3000; ANI>=99.9%; nucmer)", panel.first={abline(a = 0, b = 1, lty = 2, col = "black")})
+dev.off()
+
+
+
+
+
+######## Fig3B - CDF of skew by sequencing technology ########
+# use degree of asymmetry, not absolute value, sort by sequencing type instead of longer or shorter. # h-s, l-s, s-s, h-l, l-l, h-h
+
+col_map_h <- col_map_SeqTech_pair[1:6]
+fastANI_fl3000_maxANI_f999$nucmer_shared_skew_ls <- fastANI_fl3000_maxANI_f999$frac_shared_smaller*100 - fastANI_fl3000_maxANI_f999$frac_shared_larger*100
+saveRDS(fastANI_fl3000_maxANI_f999, 'fastANI_fl3000_maxANI_f999.rds')
+
+col_map_h
+#        ss        hs        ls        ll        hl        hh 
+# "#4363d8" "#f58231" "#3cb44b" "#e6194B" "#911eb4" "#9A6324" 
+
+# full range
+pdf(file = "CDF_skew_bySeqTech_nucmer.5.pdf", width = 4, height = 4.6)
+plot(NA, xlim = c(-max(fastANI_fl3000_maxANI_f999$nucmer_shared_skew_ls), max(fastANI_fl3000_maxANI_f999$nucmer_shared_skew_ls)), ylim = c(0, 1), xlab = "Degree of asymmetry (%)", ylab = "Cumulative probability", main = "Fig3B\nCDF of skew by sequencing technology")
+for (pair_i in seq_along(col_map_h)) {
+	pair_h <- names(col_map_h)[pair_i]
+	seqTech1 <- substr(pair_h, 1, 1)
+	seqTech2 <- substr(pair_h, 2, 2)
+	df_h <- fastANI_fl3000_maxANI_f999[fastANI_fl3000_maxANI_f999$SeqTech_pair==pair_h,]
+	asym_h <- ifelse(
+		df_h$SeqTech_B==seqTech2,
+		df_h$covQ_BA / df_h$lenQ_BA - df_h$covQ_AB / df_h$lenQ_AB,
+		df_h$covQ_AB / df_h$lenQ_AB - df_h$covQ_BA / df_h$lenQ_BA
+	)
+	plot(ecdf(asym_h*100), verticals=TRUE, pch=NA, col=col_map_h[pair_i], lwd=1, col.01line = NA, add=TRUE)
+}
+legend("bottomright", legend = names(col_map_h), col = col_map_h, lwd=1, cex  = 0.8, bty  = "n", title = "Sequencing\ntechnology")
+dev.off()
+
+
+## run K-S test directional
+# get all unique pairs
+pairs_mat <- combn(names(col_map_h), 2)
+
+get_asym <- function(pair_h) {
+    seqTech2 <- substr(pair_h, 2, 2)
+    df_h <- fastANI_fl3000_maxANI_f999[fastANI_fl3000_maxANI_f999$SeqTech_pair==pair_h,]
+    ifelse(
+        df_h$SeqTech_B==seqTech2,
+        df_h$covQ_BA / df_h$lenQ_BA - df_h$covQ_AB / df_h$lenQ_AB,
+        df_h$covQ_AB / df_h$lenQ_AB - df_h$covQ_BA / df_h$lenQ_BA
+    ) * 100
+}
+
+ks_results <- apply(pairs_mat, 2, function(pair) {
+    x <- get_asym(pair[1])
+    y <- get_asym(pair[2])
+    ks_two   <- ks.test(x, y, alternative = "two.sided")
+    ks_less  <- ks.test(x, y, alternative = "less")    # x has smaller skew than y
+    ks_great <- ks.test(x, y, alternative = "greater") # x has larger skew than y
+
+    data.frame(group1=pair[1], group2=pair[2], D=ks_two$statistic, 
+               p_two    = ks_two$p.value,
+               p_less   = ks_less$p.value,
+               p_great  = ks_great$p.value)
+})
+ks_3B_df <- do.call(rbind, ks_results)
+
+ks_3B_df$p_two_adj   <- p.adjust(ks_3B_df$p_two,   method = "BH")
+ks_3B_df$p_less_adj  <- p.adjust(ks_3B_df$p_less,  method = "BH")
+ks_3B_df$p_great_adj <- p.adjust(ks_3B_df$p_great, method = "BH")
+
+# direction based on p adj
+ks_3B_df$direction <- ifelse(
+    ks_3B_df$p_less_adj  > ks_3B_df$p_great_adj,
+    paste(ks_3B_df$group1, "<", ks_3B_df$group2),
+    paste(ks_3B_df$group1, ">", ks_3B_df$group2)
+)
+ks_3B_df
+#     group1 group2          D        p_two       p_less      p_great   p_two_adj   p_less_adj p_great_adj direction
+# D       ss     hs 0.24652778 1.518538e-03 2.581840e-01 0.0007716260 0.004555613 0.3872760562 0.005787195   ss < hs #
+# D1      ss     ls 0.18790850 2.895859e-02 4.826819e-01 0.0146632197 0.043437887 0.6218971555 0.073316098   ss < ls
+# D2      ss     ll 0.05298786 9.111966e-01 8.569284e-01 0.5327244181 0.911196622 0.9363277944 0.773129317   ss < ll
+# D3      ss     hl 0.18682283 1.029346e-02 5.146731e-03 0.5580589358 0.023897472 0.0159316522 0.773129317   ss > hl
+# D4      ss     hh 0.08977179 3.270385e-01 8.739059e-01 0.1642407707 0.350398391 0.9363277944 0.410601927   ss < hh
+# D5      hs     ls 0.17083333 1.960490e-01 9.689159e-02 0.3031007196 0.238730550 0.1726082406 0.640724281   hs > ls #
+# D6      hs     ll 0.26160714 9.991614e-04 4.995807e-04 0.1443974866 0.004555613 0.0035887065 0.410601927   hs > ll #
+# D7      hs     hl 0.26069631 1.477730e-03 7.177413e-04 1.0000000000 0.004555613 0.0035887065 1.000000000   hs > hl #
+# D8      hs     hh 0.21338007 1.274532e-02 6.372661e-03 0.3417196166 0.023897472 0.0159316522 0.640724281   hs > hh #
+# D9      ls     ll 0.20476190 2.449624e-02 1.224814e-02 0.5852511043 0.040827068 0.0262460205 0.773129317   ls > ll
+# D10     ls     hl 0.22304251 1.140316e-02 5.681985e-03 0.9264030920 0.023897472 0.0159316522 0.992574741   ls > hl
+# D11     ls     hh 0.14697693 2.068998e-01 1.035649e-01 0.6254304059 0.238730550 0.1726082406 0.773129317   ls > hh
+# D12     ll     hl 0.21263982 9.585096e-05 4.792548e-05 0.6700454083 0.001437764 0.0007188822 0.773129317   ll > hl
+# D13     ll     hh 0.07692920 1.669475e-01 4.975177e-01 0.0835224386 0.227655748 0.6218971555 0.313209145   ll < hh
+# D14     hl     hh 0.18117602 1.469792e-03 9.636721e-01 0.0007348961 0.004555613 0.9636720562 0.005787195   hl < hh
+
+# hs is greater than most of others
+
+
+
+
+
+
+######## Fig3C - AF vs. indel blocks ########
+summary(fastANI_fl3000_maxANI_f999$sum_num_indels)
+#    Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+#   0.000   0.000   0.000   3.714   4.000  60.000 
+X <- fastANI_fl3000_maxANI_f999$nucmer_ave_genome_shared
+Y <- fastANI_fl3000_maxANI_f999$sum_num_indels # total indel blocks between two genomes
+cols <- col_map_SeqTech_pair[fastANI_fl3000_maxANI_f999$SeqTech_pair]
+
+pdf(file = "AF_indelblocks_bySeqTech_nucmer.2.pdf", width = 4, height = 4.6)
+plot(x = X, y = Y, xlab = "Genome content shared (%)", ylab = "Number of contiguous regions", main = "Fig3C.\nAF vs. indel blocks", pch = 16, cex = 0.5, col = cols)
+legend("topleft",legend = paste0(names(col_map_SeqTech_pair), " (n = ", table(fastANI_fl3000_maxANI_f999$SeqTech_pair)[names(col_map_SeqTech_pair)], ")"),col = col_map_SeqTech_pair,pch = 16, cex = 0.8, bty = "n")
+dev.off()
+
+pdf(file = "AF_indelblocks_noColor_nucmer.3.pdf", width = 4, height = 4.6)
+plot(x = X, y = Y, xlab = "Genome content shared (%)", ylab = "Number of contiguous regions", main = "Fig3C.\nAF vs. indel blocks", pch = 16, cex = 0.5, col = '#00000033')
+dev.off()
+
+pdf(file = "AF_indelblocks_noColor_nucmer.4.pdf", width = 4, height = 4.6)
+plot(x = X, y = Y, xlim=c(95,100),ylim=c(0,30), xlab = "Genome content shared (%)", ylab = "Number of contiguous regions", main = "Fig3C.\nAF vs. indel blocks", pch = 16, cex = 0.5, col = '#00000033')
+dev.off()
+
+
+######## Fig3D - blocks CDF by sequencing technology ########
+col_map_h <- col_map_SeqTech_pair[1:6]
+# full range
+pdf(file = "CDF_indelblocks_bySeqTech_nucmer.3.pdf", width = 4, height = 4.6)
+plot(NA, xlim = c(0, max(fastANI_fl3000_maxANI_f999$sum_num_indels)), ylim = c(0, 1), xlab = "Number of contiguous regions", ylab = "Cumulative probability", main = "Fig3D\nCDF of indel blocks by sequencing technology")
+for (pair_h in names(col_map_h)) {
+	plot(ecdf(fastANI_fl3000_maxANI_f999[fastANI_fl3000_maxANI_f999$SeqTech_pair==pair_h,'sum_num_indels']), verticals=TRUE, pch=NA, col=col_map_h[pair_h], lwd=1, col.01line = NA, add=TRUE)
+}
+legend("bottomright", legend = paste0(names(col_map_h), " (n = ", table(fastANI_fl3000_maxANI_f999$SeqTech_pair)[names(col_map_h)], ")"), col = col_map_h, lwd  = 2, cex  = 0.8, bty  = "n", title = "Sequencing technology")
+dev.off()
+# zoom in
+pdf(file = "CDF_indelblocks_bySeqTech_nucmer.4.pdf", width = 4, height = 4.6)
+plot(NA, xlim = c(0, 30), ylim = c(0, 1), xlab = "Number of contiguous regions", ylab = "Cumulative probability", main = "Fig3D\nCDF of indel blocks by sequencing technology")
+for (pair_h in names(col_map_h)) {
+	plot(ecdf(fastANI_fl3000_maxANI_f999[fastANI_fl3000_maxANI_f999$SeqTech_pair==pair_h,'sum_num_indels']), verticals=TRUE, pch=NA, col=col_map_h[pair_h], lwd=1, col.01line = NA, add=TRUE)
+}
+legend("bottomright", legend = paste0(names(col_map_h), " (n = ", table(fastANI_fl3000_maxANI_f999$SeqTech_pair)[names(col_map_h)], ")"), col = col_map_h, lwd = 2, cex  = 0.8, bty  = "n", title = "Sequencing technology")
+dev.off()
+
+## run K-S test, directional
+pairs_mat <- combn(names(col_map_h), 2)
+
+ks_results_2D <- apply(pairs_mat, 2, function(pair) {
+    x <- fastANI_fl3000_maxANI_f999[fastANI_fl3000_maxANI_f999$SeqTech_pair == pair[1], "sum_num_indels"]
+    y <- fastANI_fl3000_maxANI_f999[fastANI_fl3000_maxANI_f999$SeqTech_pair == pair[2], "sum_num_indels"]
+    
+    ks_two   <- ks.test(x, y, alternative = "two.sided")
+    ks_less  <- ks.test(x, y, alternative = "less")
+    ks_great <- ks.test(x, y, alternative = "greater")
+    
+    data.frame(group1  = pair[1], group2 = pair[2],
+               D       = ks_two$statistic,
+               p_two   = ks_two$p.value,
+               p_less  = ks_less$p.value,
+               p_great = ks_great$p.value
+               )
+})
+
+ks_results_2D_df <- do.call(rbind, ks_results_2D)
+
+ks_results_2D_df$p_two_adj   <- p.adjust(ks_results_2D_df$p_two,   method = "BH")
+ks_results_2D_df$p_less_adj  <- p.adjust(ks_results_2D_df$p_less,  method = "BH")
+ks_results_2D_df$p_great_adj <- p.adjust(ks_results_2D_df$p_great, method = "BH")
+
+# direction based on p adj
+ks_results_2D_df$direction <- ifelse(
+    ks_results_2D_df$p_less_adj  > ks_results_2D_df$p_great_adj,
+    paste0(ks_results_2D_df$group1, "<", ks_results_2D_df$group2),
+    paste0(ks_results_2D_df$group1, ">", ks_results_2D_df$group2)
+)
+#     group1 group2          D        p_two       p_less      p_great   p_two_adj  p_less_adj p_great_adj direction
+# D       ss     hs 0.27267157 4.057585e-04 1.0000000000 2.210886e-04 0.002028793 1.000000000 0.001105443     ss<hs
+# D1      ss     ls 0.16143791 6.036813e-02 0.4286521959 3.180733e-02 0.100613543 0.803722867 0.095422004     ss<ls
+# D2      ss     ll 0.08137255 4.476775e-01 0.7175457313 2.264671e-01 0.516550977 1.000000000 0.424625842     ss<ll
+# D3      ss     hl 0.28148441 1.276239e-05 1.0000000000 6.381195e-06 0.000122176 1.000000000 0.000061088     ss<hl
+# D4      ss     hh 0.11076793 1.277941e-01 0.9806846557 6.391376e-02 0.174264737 1.000000000 0.159784393     ss<hh
+# D5      hs     ls 0.25520833 9.487144e-03 0.0051340309 1.000000e+00 0.020329595 0.025670154 1.000000000     hs>ls
+# D6      hs     ll 0.24776786 2.186205e-03 0.0010931026 1.000000e+00 0.005465513 0.008198269 1.000000000     hs>ll
+# D7      hs     hl 0.09007970 5.975329e-01 0.4144854368 3.047953e-01 0.597532916 0.803722867 0.507992169     hs<hl
+# D8      hs     hh 0.18716438 4.089999e-02 0.0204501705 1.000000e+00 0.076687483 0.076688139 1.000000000     hs>hh
+# D9      ls     ll 0.17380952 8.383118e-02 0.0419186766 6.687259e-01 0.125746767 0.125756030 0.911899015     ls>ll
+# D10     ls     hl 0.26957494 1.163030e-03 1.0000000000 3.939326e-04 0.003489089 1.000000000 0.001477247     ls<hl
+# D11     ls     hh 0.11320605 5.117600e-01 0.2604778087 3.811220e-01 0.548314258 0.651194522 0.571683072     ls<hh
+# D12     ll     hl 0.23080857 1.629013e-05 1.0000000000 8.145067e-06 0.000122176 1.000000000 0.000061088     ll<hl
+# D13     ll     hh 0.06060348 4.242407e-01 1.0000000000 2.142247e-01 0.516550977 1.000000000 0.424625842     ll<hh
+# D14     hl     hh 0.18699044 9.180917e-04 0.0004590459 1.000000e+00 0.003442844 0.006885688 1.000000000     hl>hh
+
