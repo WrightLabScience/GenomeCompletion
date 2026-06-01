@@ -313,10 +313,14 @@ grep -h 'frac' *.out | sed -E 's/\s{2,}/\t/g' | sed -E 's/^\t//g' | sed -E 's/(G
 
 # Read into R
 IdentifyMissingReads_test.5 <- read.table('IdentifyMissingReads_test.5.tsv', sep="\t", quote="", header=FALSE, fill=TRUE, col.names=c('genomeID', 'frac_sub', 'chunk', 'rep', 'MAX_COVERAGE', 'K', 'mapped_fraction', 'coverage', 'w', 'par_mult', 'par_size', 'par_mean', 'fitted_SSE', 'threshold', 'genome_size', 'bases_missing', 'frac_missing'))
+saveRDS(IdentifyMissingReads_test.5, 'IdentifyMissingReads_test.5.rds')
 
 subsample_CheckM.5 <- read.table('subsample_CheckM.5.out.tsv', sep="\t", header=FALSE, quote="", fill=TRUE, comment.char="", col.names=c('genomeID', 'frac_sub', 'chunk', 'rep', 'Marker_lineage', 'taxon_level', 'n_genomes', 'n_markers', 'n_marker_sets', 'mi_0', 'mi_1', 'mi_2', 'mi_3', 'mi_4', 'mi_5', 'Completeness', 'Contamination', 'Strain_heterogeneity'))
+saveRDS(subsample_CheckM.5, 'subsample_CheckM.5.rds')
 
 
+
+# plot
 pdf(file = "sub_missing.6.pdf", width = 5, height = 8.6)
 par(mfrow = c(3, 2))
 
