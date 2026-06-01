@@ -2,6 +2,8 @@
 
 
 Notes, scripts, and data used in the genome completeness manuscript.
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20499494.svg)](https://doi.org/10.5281/zenodo.20499494)
+
 
 Collecting_genomes_and_metadata
 ---
