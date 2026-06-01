@@ -139,3 +139,268 @@ dev.off()
 
 # Fig 5C: Example of fitting: GCF_017356805_covInf.pdf
 IdentifyMissingReads.7.r --genome_file=GCF_017356805.fna.gz --short_read_file=GCF_017356805_trimDNA.fasta.gz --save_plot
+# # add log ticks to Fig5C
+pdf(file = "Fitted_Kmer.0.pdf", width = 4, height = 4.6)
+plot(NA, xlim=c(1,10000),ylim=c(1,1000000), log='xy')
+# minor ticks (no labels)
+minor_ticks <- as.vector(outer(2:9, 10^(0:3)))
+axis(1, at=minor_ticks, labels=FALSE, tcl=-0.2)
+minor_ticks <- as.vector(outer(2:9, 10^(0:5)))
+axis(2, at=minor_ticks, labels=FALSE, tcl=-0.2)
+dev.off()
+
+
+
+############ Supplementary Figure: IdentifyMissingReads vs. CheckM Completeness ############
+
+# pick genomes (n~=30) as test set: compare with CheckM
+# test range from 0.98 to 1.00
+df <- IdentifyMissingReads.7.covInf_merge_mf95[IdentifyMissingReads.7.covInf_merge_mf95$fit_threshold,]
+pool_testset <- df[df$read_type=='h' & df$frac_missing<0.0001,]
+pool_testset <- pool_testset[order(pool_testset$frac_missing), ]
+testset <- pool_testset %>%
+  group_by(species_taxid) %>%
+  slice_min(frac_missing, n = 1) %>%
+  ungroup()
+dim(testset)
+[1] 28 65
+write.table(x = testset[,c('genomeID','phylum','class','order','family','genus','species')], file = 'queue_list.5.txt', quote = FALSE, row.names = FALSE, append = FALSE, sep = "\t", col.names = FALSE)
+
+# Generate CheckM taxon list for fast lookup
+checkm taxon_list > CheckM_taxon.list
+head CheckM_taxon.list
+# [2025-08-21 01:08:01] INFO: CheckM v1.2.3
+# [2025-08-21 01:08:01] INFO: checkm taxon_list
+# [2025-08-21 01:08:01] INFO: CheckM data: /net/dali/home/mscbio/shc167/BioInfoTools/checkm_data
+# [2025-08-21 01:08:01] INFO: [CheckM - taxon_list] Listing available taxonomic-specific marker sets.
+
+################################################# Run test set on cluster #################################################
+mkdir subsample_Kmer.5
+vim subsample_Kmer.5.slurm
+#!/bin/bash
+
+#SBATCH -J sub_Kmer.5
+#SBATCH -p dept_cpu
+#SBATCH -c 1
+#SBATCH -a 1-28
+
+# setup SCRDIR
+SCRDIR=/scr/${SLURM_JOB_ID}
+mkdir /scr/${SLURM_JOB_ID}
+cd $SCRDIR
+echo "SCRDIR:" /net/$SLURMD_NODENAME/scr/${SLURM_JOB_ID}
+outdir=subsample_Kmer.5/
+
+# get var
+genomeID=`awk -F'\t' 'NR == x { print $1 }' x=$SLURM_ARRAY_TASK_ID queue_list.5.txt`
+phylum=`awk -F'\t' 'NR == x { print $2 }' x=$SLURM_ARRAY_TASK_ID queue_list.5.txt`
+class=`awk -F'\t' 'NR == x { print $3 }' x=$SLURM_ARRAY_TASK_ID queue_list.5.txt`
+order=`awk -F'\t' 'NR == x { print $4 }' x=$SLURM_ARRAY_TASK_ID queue_list.5.txt`
+family=`awk -F'\t' 'NR == x { print $5 }' x=$SLURM_ARRAY_TASK_ID queue_list.5.txt`
+genus=`awk -F'\t' 'NR == x { print $6 }' x=$SLURM_ARRAY_TASK_ID queue_list.5.txt`
+species=`awk -F'\t' 'NR == x { print $7 }' x=$SLURM_ARRAY_TASK_ID queue_list.5.txt`
+echo "Job running ... ${genomeID} ${species}, sub_Kmer.5"
+
+# CheckM: Generate taxonomic-specific marker set.
+echo "##### CheckM: Generate taxonomic-specific marker set "
+if grep -q "${species}" CheckM_taxon.list; then
+	checkm taxon_set species "${species}" out.ms
+	echo "CheckM level: species ${genomeID}"
+elif grep -q "${genus}" CheckM_taxon.list; then
+	checkm taxon_set genus "${genus}" out.ms
+	echo "CheckM level: genus ${genomeID}"
+elif grep -q "${family}" CheckM_taxon.list; then
+	checkm taxon_set family "${family}" out.ms
+	echo "CheckM level: family ${genomeID}"
+else
+	echo "##### CheckM taxon not found: ${genomeID}"
+fi
+
+if [[ -f out.ms ]]; then
+	mkdir bins_checkm
+	if [[ -f download_reads.1.out/${genomeID}_trimDNA.fasta.gz ]]; then
+		echo "${genomeID}_trimDNA.fasta.gz exist"
+		rsync -av download_reads.1.out/${genomeID}_trimDNA.fasta.gz subsample_genome.1.r IdentifyMissingReads.7.r ${SCRDIR}/
+		if [[ -f source_data_04112026/genomic.fna/${genomeID}.fna.gz ]]; then
+			rsync -avz --progress source_data_04112026/genomic.fna/${genomeID}.fna.gz ${SCRDIR}/
+		else
+			rsync -avz --progressfetch_source_data.3.r assembly_summary_complete_1ctg_hs.rds ${SCRDIR}/
+			Rscript fetch_source_data.3.r assembly_summary_complete_1ctg_hs.rds ${genomeID} ftp_path fna
+		fi
+		genome_file=${genomeID}.fna.gz
+		# subsample genome region
+		for frac in $(seq 0.980 0.001 0.999); do
+			echo "Fraction = ${frac}"
+			for repeat_i in {1..3}; do
+				echo "repeat ${repeat_i}"
+				# subsample genome region
+				Rscript subsample_genome.1.r --in_fasta=${genome_file} --out_fasta=bins_checkm/${genomeID}_frac${frac}_chunk500_rep${repeat_i}.fna --fraction=${frac} --chunk_size=500
+				Rscript subsample_genome.1.r --in_fasta=${genome_file} --out_fasta=bins_checkm/${genomeID}_frac${frac}_chunk1000_rep${repeat_i}.fna --fraction=${frac} --chunk_size=1000
+				# IdentifyMissingReads
+				time Rscript IdentifyMissingReads.7.r --genome_file="bins_checkm/${genomeID}_frac${frac}_chunk1000_rep${repeat_i}.fna" --short_read_file="${genomeID}_trimDNA.fasta.gz" --MIN_mapped_frac=0 --save_plot
+				time Rscript IdentifyMissingReads.7.r --genome_file="bins_checkm/${genomeID}_frac${frac}_chunk500_rep${repeat_i}.fna" --short_read_file="${genomeID}_trimDNA.fasta.gz" --MIN_mapped_frac=0
+			done
+		done
+		gunzip -c "${genomeID}.fna.gz" > "bins_checkm/${genomeID}_frac1_chunkNA_repNA.fna"
+		time Rscript IdentifyMissingReads.7.r --genome_file="bins_checkm/${genomeID}_frac1_chunkNA_repNA.fna" --short_read_file="${genomeID}_trimDNA.fasta.gz" --MIN_mapped_frac=0
+		rsync -av *.pdf ${outdir}
+
+		# CheckM
+		checkm analyze -t 1 out.ms bins_checkm/ output_checkm/
+		checkm qa --file checkm_qa_${genomeID}.out out.ms output_checkm/
+		if [[ -f checkm_qa_${genomeID}.out ]]; then
+			mv checkm_qa_${genomeID}.out ${outdir}
+			echo "##### DONE CheckM ${genomeID} ${species}"
+		else
+			echo "##### FAIL CheckM ${genomeID} ${species}"
+		fi
+	else
+		echo -e "${genomeID}_trimDNA.fasta.gz NOT exist (Error)...\t$SLURM_ARRAY_TASK_ID\t${genomeID}"
+	fi
+fi
+# clean files
+trap "rm -r $SCRDIR" EXIT
+
+# echo information
+echo $SLURM_SUBMIT_DIR
+echo $SLURMD_NODENAME
+echo $SLURM_JOB_ID
+echo $SLURM_ARRAY_TASK_ID
+echo $genomeID
+############################# END OF SCRIPT #############################
+# run slurm
+mkdir runSlurm_subsample_Kmer.5/
+cd runSlurm_subsample_Kmer.5/
+sbatch subsample_Kmer.5.slurm
+
+grep 'CheckM level' *.out
+slurm-56586993_10.out:CheckM level: species GCF_047275895
+slurm-56586993_11.out:CheckM level: species GCF_002865765
+slurm-56586993_12.out:CheckM level: species GCF_051790875
+slurm-56586993_13.out:CheckM level: family GCF_024741855
+slurm-56586993_14.out:CheckM level: species GCF_020736105
+slurm-56586993_15.out:CheckM level: species GCF_041080705
+slurm-56586993_16.out:CheckM level: species GCF_023278485
+slurm-56586993_17.out:CheckM level: species GCF_037076285
+slurm-56586993_18.out:CheckM level: species GCF_002234775
+slurm-56586993_19.out:CheckM level: family GCF_014843175
+slurm-56586993_1.out:CheckM level: family GCF_019895115
+slurm-56586993_20.out:CheckM level: species GCF_049913185
+slurm-56586993_21.out:CheckM level: species GCF_042852175
+slurm-56586993_22.out:CheckM level: family GCF_030412725
+slurm-56586993_23.out:CheckM level: family GCF_056312095
+slurm-56586993_24.out:CheckM level: species GCF_037997085
+slurm-56586993_25.out:CheckM level: genus GCF_035580465
+slurm-56586993_26.out:CheckM level: genus GCF_979914115
+slurm-56586993_27.out:CheckM level: species GCF_031101875
+slurm-56586993_28.out:CheckM level: genus GCF_029718635
+slurm-56586993_2.out:CheckM level: species GCF_002587225
+slurm-56586993_3.out:CheckM level: species GCF_019670505
+slurm-56586993_4.out:CheckM level: species GCF_028961985
+slurm-56586993_5.out:CheckM level: species GCF_034641715
+slurm-56586993_6.out:CheckM level: species GCF_020526045
+slurm-56586993_7.out:CheckM level: species GCF_031432935
+slurm-56586993_8.out:CheckM level: species GCF_013000945
+slurm-56586993_9.out:CheckM level: species GCF_041447195
+
+
+# concat results
+cd runSlurm_subsample_Kmer.5/; grep -h '### Result_Kmer' * | sed -E 's/### Result_Kmer\t(GCF_[0-9]+)_frac([^_]+)_chunk([^_]+)_rep([^\.]+)/\1\t\2\t\3\t\4/g' | sort -u > IdentifyMissingReads_test.5.tsv
+
+cd subsample_Kmer.5/
+grep -h 'frac' *.out | sed -E 's/\s{2,}/\t/g' | sed -E 's/^\t//g' | sed -E 's/(GCF_[0-9]+)_frac([^_]+)_chunk([^_]+)_rep([^\.]+)/\1\t\2\t\3\t\4/g' | sed -E 's/ \(/\t/g' | sed -E 's/\)//g' | sed -E 's/\t$//g' > subsample_CheckM.5.out.tsv
+
+
+# Read into R
+IdentifyMissingReads_test.5 <- read.table('IdentifyMissingReads_test.5.tsv', sep="\t", quote="", header=FALSE, fill=TRUE, col.names=c('genomeID', 'frac_sub', 'chunk', 'rep', 'MAX_COVERAGE', 'K', 'mapped_fraction', 'coverage', 'w', 'par_mult', 'par_size', 'par_mean', 'fitted_SSE', 'threshold', 'genome_size', 'bases_missing', 'frac_missing'))
+
+subsample_CheckM.5 <- read.table('subsample_CheckM.5.out.tsv', sep="\t", header=FALSE, quote="", fill=TRUE, comment.char="", col.names=c('genomeID', 'frac_sub', 'chunk', 'rep', 'Marker_lineage', 'taxon_level', 'n_genomes', 'n_markers', 'n_marker_sets', 'mi_0', 'mi_1', 'mi_2', 'mi_3', 'mi_4', 'mi_5', 'Completeness', 'Contamination', 'Strain_heterogeneity'))
+
+
+pdf(file = "sub_missing.6.pdf", width = 5, height = 8.6)
+par(mfrow = c(3, 2))
+
+### all chunk size ###
+df <- IdentifyMissingReads_test.5
+df$chunk[is.na(df$chunk)] <- 'NA'
+X=df$frac_sub*100
+Y=(1-df$frac_missing)*100
+model <- lm(Y ~ X)
+intercept <- predict(model, newdata = data.frame(X = 100)) # 100.001 
+plot(X, Y, xlab='Percent genome subsampled (%)', ylab='1 - frac_missing (%)', pch=16, cex=0.5, main=paste0('IdentifyMissingReads (kmer)\nfrac_sub vs. 1-frac_missing\nx=100 intercept: ', round(intercept,4)), xlim=c(98,100), ylim=c(90,100), col = '#00000011')
+abline(model, col = "#f58231", lwd = 2)
+# R^2
+summary_model <- summary(model)
+legend("bottomright", legend = bquote(R^2 == .(round(summary_model$r.squared, 3))), col = '#f58231', inset = 0.025, bty="n",lwd=2)
+
+
+# plot to check the correlation between frac_sub and CheckM completeness, all data
+df <- subsample_CheckM.5
+df$chunk[is.na(df$chunk)] <- 'NA'
+X=df$frac_sub*100
+Y=df$Completeness
+model <- lm(Y ~ X) # model for prediction
+intercept <- predict(model, newdata = data.frame(X = 100)) # 98.95362
+plot(X, Y, xlab='Percent genome subsampled (%)', ylab='CheckM completeness (%)', pch=16, cex=0.5, main=paste0('CheckM\nfrac_sub vs. completeness\nx=100 intercept: ', round(intercept,4)), xlim=c(98,100), ylim=c(90,100), col = '#00000011')
+abline(model, col = "#f58231", lwd = 2)
+# R^2
+summary_model <- summary(model)
+legend("bottomright", legend = bquote(R^2 == .(round(summary_model$r.squared, 3))), col = '#f58231', inset = 0.025, bty="n",lwd=2)
+
+
+### chunk size=1000 ###
+df <- IdentifyMissingReads_test.5[IdentifyMissingReads_test.5$chunk==1000 | is.na(IdentifyMissingReads_test.5$chunk),]
+df$chunk[is.na(df$chunk)] <- 'NA'
+X=df$frac_sub*100
+Y=(1-df$frac_missing)*100
+model <- lm(Y ~ X)
+intercept <- predict(model, newdata = data.frame(X = 100)) # 100.001 
+plot(X, Y, xlab='Percent genome subsampled (%)', ylab='1 - frac_missing (%)', pch=16, cex=0.5, main=paste0('chunk size=1000\nx=100 intercept: ', round(intercept,4)), xlim=c(98,100), ylim=c(90,100), col = '#00000011')
+abline(model, col = "#f58231", lwd = 2)
+# R^2
+summary_model <- summary(model)
+legend("bottomright", legend = bquote(R^2 == .(round(summary_model$r.squared, 3))), col = '#f58231', inset = 0.025, bty="n",lwd=2)
+
+
+# plot to check the correlation between frac_sub and CheckM completeness, all data
+df <- subsample_CheckM.5[subsample_CheckM.5$chunk==1000 | is.na(subsample_CheckM.5$chunk),]
+df$chunk[is.na(df$chunk)] <- 'NA'
+X=df$frac_sub*100
+Y=df$Completeness
+model <- lm(Y ~ X) # model for prediction
+intercept <- predict(model, newdata = data.frame(X = 100)) # 98.95362
+plot(X, Y, xlab='Percent genome subsampled (%)', ylab='CheckM completeness (%)', pch=16, cex=0.5, main=paste0('chunk size=1000\nx=100 intercept: ', round(intercept,4)), xlim=c(98,100), ylim=c(90,100), col = '#00000011')
+abline(model, col = "#f58231", lwd = 2)
+# R^2
+summary_model <- summary(model)
+legend("bottomright", legend = bquote(R^2 == .(round(summary_model$r.squared, 3))), col = '#f58231', inset = 0.025, bty="n",lwd=2)
+
+
+### chunk size=500 ###
+df <- IdentifyMissingReads_test.5[IdentifyMissingReads_test.5$chunk==500 | is.na(IdentifyMissingReads_test.5$chunk),]
+df$chunk[is.na(df$chunk)] <- 'NA'
+X=df$frac_sub*100
+Y=(1-df$frac_missing)*100
+model <- lm(Y ~ X)
+intercept <- predict(model, newdata = data.frame(X = 100)) # 100.001 
+plot(X, Y, xlab='Percent genome subsampled (%)', ylab='1 - frac_missing (%)', pch=16, cex=0.5, main=paste0('chunk size=500\nx=100 intercept: ', round(intercept,4)), xlim=c(98,100), ylim=c(90,100), col = '#00000011')
+abline(model, col = "#f58231", lwd = 2)
+# R^2
+summary_model <- summary(model)
+legend("bottomright", legend = bquote(R^2 == .(round(summary_model$r.squared, 3))), col = '#f58231', inset = 0.025, bty="n",lwd=2)
+
+
+# plot to check the correlation between frac_sub and CheckM completeness, all data
+df <- subsample_CheckM.5[subsample_CheckM.5$chunk==500 | is.na(subsample_CheckM.5$chunk),]
+df$chunk[is.na(df$chunk)] <- 'NA'
+X=df$frac_sub*100
+Y=df$Completeness
+model <- lm(Y ~ X) # model for prediction
+intercept <- predict(model, newdata = data.frame(X = 100)) # 98.95362
+plot(X, Y, xlab='Percent genome subsampled (%)', ylab='CheckM completeness (%)', pch=16, cex=0.5, main=paste0('chunk size=500\nx=100 intercept: ', round(intercept,4)), xlim=c(98,100), ylim=c(90,100), col = '#00000011')
+abline(model, col = "#f58231", lwd = 2)
+# R^2
+summary_model <- summary(model)
+legend("bottomright", legend = bquote(R^2 == .(round(summary_model$r.squared, 3))), col = '#f58231', inset = 0.025, bty="n",lwd=2)
+
+dev.off()
