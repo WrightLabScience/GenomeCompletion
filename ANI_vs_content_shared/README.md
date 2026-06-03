@@ -1,6 +1,6 @@
 # Figure 2AB
 # Comparing genome sequence similarity (ANI) vs. genome content shared
 
-Notes for the regenerating the results.
+This folder cantains: Dataset (.rds), scripts (.r), and the result figures (.pdf).
 
-Dataset used and the result figures are in the folder.
+Notes for how to used them to generate the results: Analysis_ANI_vs_content_shared.txt
