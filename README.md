@@ -1,4 +1,4 @@
-# Genome completeness - Data and materials
+# Data and materials for the genome completeness manuscript
 
 Notes, scripts, and data used in the genome completeness manuscript: 
 "Many ostensibly complete bacterial genomes are actually incomplete"
