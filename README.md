@@ -1,9 +1,9 @@
 # Data and materials for the genome completeness manuscript
 
-Notes, scripts, and data used in the genome completeness manuscript: 
+Notes, scripts, and dataset used in the manuscript: 
 "Many ostensibly complete bacterial genomes are actually incomplete"
 
-This study investigates the completeness of bacterial genome assemblies, identifying missing regions and characterizing their genomic content.
+This study investigates the completeness of bacterial genome assemblies in public database RefSeq, identifying putative missing regions and characterizing their genomic content.
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20499494.svg)](https://doi.org/10.5281/zenodo.20499494)
 
