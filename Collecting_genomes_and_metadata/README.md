@@ -10,7 +10,6 @@ Notes for how to used the provided dataset and scripts to generate the results: 
 - `CheckM_report_prokaryotes_04112026.txt.zip` — CheckM completeness/contamination report (downloaded on April 11 2026)
 - `SeqTech_class.1.rds` — metadata for sequencing technology classification
 - `refseq_bacteria_assembly_summary_04112026.rds` — parsed assembly summary with metadata
-- `fastANI_fl3000_maxANI.rds` — pairwise ANI results, highest ANI pair per genome
 
 ## Scripts:
 - `fetch_source_data.3.r` — download source data (i.e., genome assemblies .fna, annotation .gff) from NCBI
