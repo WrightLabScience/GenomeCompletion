@@ -17,12 +17,12 @@ Notes for how to used the provided dataset and scripts to generate the results: 
 - `parse_assembly_stats.3.r` — parse metadata from `esummary.xml`
 
 ## Result figures:
-- Figure 1B left: CDFs of CheckM completeness \
+- Figure 1B left: CDFs of CheckM completeness
     - [CDF_checkm_comp.1.pdf](CDF_checkm_comp.1.pdf) — full range
     - [CDF_checkm_comp.2.pdf](CDF_checkm_comp.2.pdf) — zoomed-in
     - [CDF_checkm_comp.3.pdf](CDF_checkm_comp.3.pdf) — zoomed-in
 
-- Figure 1B right: CDFs of CheckM contamination \
+- Figure 1B right: CDFs of CheckM contamination
     - [CDF_checkm_cont.1.pdf](CDF_checkm_cont.1.pdf) — full range
     - [CDF_checkm_cont.2.pdf](CDF_checkm_cont.2.pdf) — zoomed-in
     - [CDF_checkm_cont.3.pdf](CDF_checkm_cont.3.pdf) — zoomed-in
