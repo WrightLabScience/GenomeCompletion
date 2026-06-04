@@ -1,5 +1,5 @@
-# Figure 2AB
 # Comparing genome sequence similarity (ANI) vs. genome content shared
+# Figure 2AB
 
 This folder cantains: Dataset (.rds), scripts (.r), and the result figures (.pdf).
 

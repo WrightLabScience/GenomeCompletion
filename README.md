@@ -1,51 +1,53 @@
 # Genome_completeness
 
+Notes, scripts, and data used in the genome completeness manuscript: 
+Many ostensibly complete bacterial genomes are actually incomplete
 
-Notes, scripts, and data used in the genome completeness manuscript.
+This study investigates the completeness of bacterial genome assemblies, identifying missing regions and characterizing their genomic content.
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20499494.svg)](https://doi.org/10.5281/zenodo.20499494)
 
 
-Collecting_genomes_and_metadata
----
-Figure 1B
+## Collecting genome assemblies and corresponding metadata
+Folder: Collecting_genomes_and_metadata
+Related results: Figure 1B
 
 
-ANI_vs_content_shared
----
-Figure 2AB
+## Comparing genome sequence similarity (ANI) vs. genome content shared
+Folder: ANI_vs_content_shared
+Related results: Figure 2AB
 
 
-Gene_content_in_missing_regions
----
-Figure 2CD
+## Genomic content in regions not shared by closely related genome pairs (ANI ≥ 99.9%)
+Folder: Gene_content_in_missing_regions
+Related results: Figure 2CD
 
 
-Missing_region_asymmetry
----
-Figure 3ABCD
+## Genome content asymmetry between closely related genome pairs (ANI ≥ 99.9%)
+Folder: Missing_region_asymmetry
+Related results: Figure 3ABCD
 
 
-Repeat_collapse_read_cov
----
-Figure 4ABC
+## Investigating repeat collapse by read coverage
+Folder: Repeat_collapse_read_cov
+Related results: Figure 4ABC
 
 
-Repeat_collapse_TR_length
----
-Figure 4D
+## Investigating repeat collapse by comparing exact tandem repeat total lengths distributions
+Folder: Repeat_collapse_TR_length
+Related results: Figure 4D
 
 
-Missing_region_omitted_reads
----
-Figure 5A
+## Investigating putative missing region by mapping reads to source and high ANI partner genomes
+Folder: Missing_region_omitted_reads
+Related results: Figure 5A
 
 
-Features_in_omitted_regions
----
-Figure 5B
+## Investigating gene features in putative missing regions with omitted reads
+Folder: Features_in_omitted_regions
+Related results: Figure 5B
 
 
-Missing_region_kmer_counts
----
-Figure 5CD, S1
+## Investigating putative missing region by comparing k-mer counts between reads and assembly
+Folder: Missing_region_kmer_counts
+Related results: Figure 5CD, S1
