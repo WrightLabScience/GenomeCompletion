@@ -38,7 +38,7 @@ Folder: [Repeat_collapse_TR_length](Repeat_collapse_TR_length/) \
 Related results: Figure 4D
 
 
-## Investigating putative missing region by mapping reads to source and high ANI partner genomes
+## Investigating putative missing region by mapping reads to source and closely related partner genomes (ANI ≥ 99.9%)
 Folder: [Missing_region_omitted_reads](Missing_region_omitted_reads/) \
 Related results: Figure 5A
 
