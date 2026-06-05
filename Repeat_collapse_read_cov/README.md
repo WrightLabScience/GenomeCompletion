@@ -14,8 +14,8 @@ Notes for how to used the provided dataset and scripts to generate the results: 
 ## Scripts:
 - `fetch_source_data.3.r` - download source data (i.e., genome assemblies `*.fna`, metadata `*_assembly_stats.txt`, annotation `*.gff`) from NCBI
 - `get_SRA_info.2.r` - retrieve SRA info (run IDs) from NCBI
-- `trim_reads.3.r` - trim reads by quality and pairing
-- `map_reads.6.r` - map reads to source genome, get regions with statistically high coverage
+- `trim_reads.3.r` - trim reads by quality score and pairing
+- `map_reads.6.r` - map reads to the source genome, get regions with statistically high coverage
 
 ## Result figures:
 - Figure 4A - example of high cov region in GCF_001677195.1
