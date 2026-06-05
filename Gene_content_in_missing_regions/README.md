@@ -1,4 +1,4 @@
-# Genomic content in regions not shared by high ANI genome pair
+# Genomic content in regions not shared by high ANI genome pairs
 
 Related results: Figure 2CD
 
