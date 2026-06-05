@@ -20,6 +20,6 @@ Notes for how to used the provided dataset and scripts to generate the results: 
 - Figure 5C - Distribution of K-mer counts with fitted
     - [GCF_017356805_covInf.pdf](GCF_017356805_covInf.pdf) - example plot from genome GCF_017356805.1
 - Figure 5D - CDFs of estimated fraction missing by sequencing technology
-    - [CDF_Kmer.9.pdf](CDF_Kmer.9.pdf) - full range, colored by sequencing technology
+    - [CDF_Kmer.10.pdf](CDF_Kmer.10.pdf) - full range, colored by sequencing technology
 - Figure S1 - Genome completeness estimation from our method and CheckM
     - [sub_missing.6.pdf](sub_missing.6.pdf) - all chunk sizes (1st row), chunk size = 1000 nt (2nd row), chunk size = 500 nt (3rd row), our K-mer based method (left column), CheckM completeness (right column)
