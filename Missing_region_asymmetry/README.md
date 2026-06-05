@@ -12,12 +12,12 @@ Notes for how to used the provided dataset to generate the results: [Analysis_mi
     - [skew_bySeqTech_nucmer.2.pdf](skew_bySeqTech_nucmer.2.pdf) - full range, colored by sequencing technology
     - [skew_noColor_nucmer.3.pdf](skew_noColor_nucmer.3.pdf) - full range, no color
     - [skew_noColor_nucmer.4.pdf](skew_noColor_nucmer.4.pdf) - zoomed-in
-- Figure 3B - CDF of skew by sequencing technology, NOT sorted by genome sizes
+- Figure 3B - CDFs of skewness by sequencing technology pair
     - [CDF_skew_bySeqTech_nucmer.5.pdf](CDF_skew_bySeqTech_nucmer.5.pdf) - full range, colored by sequencing technology
 - Figure 3C - genome region shared vs. number of contiguous indel blocks
     - [AF_indelblocks_bySeqTech_nucmer.2.pdf](AF_indelblocks_bySeqTech_nucmer.2.pdf) -  full range, colored by sequencing technology
     - [AF_indelblocks_noColor_nucmer.3.pdf](AF_indelblocks_noColor_nucmer.3.pdf) - full range, no color
     - [AF_indelblocks_noColor_nucmer.4.pdf](AF_indelblocks_noColor_nucmer.4.pdf) - zoomed-in
-- Figure 3D - CDF of number of contiguous indel blocks
+- Figure 3D - CDFs of number of contiguous indel blocks
     - [CDF_indelblocks_bySeqTech_nucmer.3.pdf](CDF_indelblocks_bySeqTech_nucmer.3.pdf) -  full range
     - [CDF_indelblocks_bySeqTech_nucmer.4.pdf](CDF_indelblocks_bySeqTech_nucmer.4.pdf) -  zoomed-in
