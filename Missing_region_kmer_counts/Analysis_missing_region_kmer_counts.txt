@@ -3,7 +3,7 @@ Analysis_missing_region_kmer_counts.txt
 Shu-Ting Cho <shutingcho@pitt.edu>
 
 # Investigating putative missing region by comparing k-mer counts between reads and assembly
-# Figure 5CD
+# Figure 5CD, S1
 
 
 # Run on balanced dataset: complete, no amb, single contig, single Illumina PE SRA, >=95% genome mapped, >= 50% reads mapped
